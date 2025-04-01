@@ -80,10 +80,7 @@ void Octree::printTree(std::string line) {
     }
 }
 
-// double Octree::childDistances(const Point &, int radius){
 
-//     return ;
-// }
 Point Octree::find_closest(const Point &target, int radius) {
     Point closestPoint;
     double minDist = std::numeric_limits<double>::max();
@@ -107,4 +104,61 @@ Point Octree::find_closest(const Point &target, int radius) {
         }
     }
     return closestPoint;
+}
+
+
+void Octree::drawCube(const Point center, double h) {
+    float x = center.x, y = center.y, z = center.z;
+    glColor3f(0.0f, 0.0f, 1.0f); // Azul sólido
+    glBegin(GL_QUADS);
+    
+    // Cara frontal
+    glVertex3f(x, y, z);
+    glVertex3f(x + h, y, z);
+    glVertex3f(x + h, y + h, z);
+    glVertex3f(x, y + h, z);
+
+    // Cara trasera
+    glVertex3f(x, y, z + h);
+    glVertex3f(x + h, y, z + h);
+    glVertex3f(x + h, y + h, z + h);
+    glVertex3f(x, y + h, z + h);
+
+    // Cara izquierda
+    glVertex3f(x, y, z);
+    glVertex3f(x, y, z + h);
+    glVertex3f(x, y + h, z + h);
+    glVertex3f(x, y + h, z);
+
+    // Cara derecha
+    glVertex3f(x + h, y, z);
+    glVertex3f(x + h, y, z + h);
+    glVertex3f(x + h, y + h, z + h);
+    glVertex3f(x + h, y + h, z);
+
+    // Cara superior
+    glVertex3f(x, y + h, z);
+    glVertex3f(x + h, y + h, z);
+    glVertex3f(x + h, y + h, z + h);
+    glVertex3f(x, y + h, z + h);
+
+    // Cara inferior
+    glVertex3f(x, y, z);
+    glVertex3f(x + h, y, z);
+    glVertex3f(x + h, y, z + h);
+    glVertex3f(x, y, z + h);
+
+    glEnd();
+}
+
+void Octree::drawOctree() {
+    if (points.size()==0) return;
+
+    drawCube(points[0], 50);
+
+    for (int i = 0; i < 8; i++) {
+        if (children[i] != nullptr) {
+            children[i]->drawOctree();
+        }
+    }
 }

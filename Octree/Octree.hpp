@@ -5,6 +5,7 @@
 #include <string>
 #include <cmath>
 #include <limits>
+#include <GL/glut.h>
 using namespace std;
 
 struct Point{
@@ -37,23 +38,24 @@ struct Point{
 
 class Octree {
     private:
-    Octree *children[8];
-    //Point *points; // 
-    std::vector<Point> points;
+        Octree *children[8];
+        //Point *points; // 
+        std::vector<Point> points;
 
-    // bottomLeft y h definen el espacio(cubo más grande)
-    Point bottomLeft;
-    double h;
-    int nPoints; // puntos ingresados o capacidad.
+        // bottomLeft y h definen el espacio(cubo más grande)
+        Point bottomLeft;
+        double h;
+        int nPoints; // puntos ingresados o capacidad.
 
     public:
-    Octree();
-    Octree(const Point &p, double height, int capacity);
-    bool exist( const Point & );
-    void insert( const Point & );
-    Point find_closest( const Point &, int radius);
-    //double childDistances(const Point &, int radius);
-    void printTree(std::string line="|");
+        Octree();
+        Octree(const Point &p, double height, int capacity);
+        bool exist( const Point & );
+        void insert( const Point & );
+        Point find_closest( const Point &, int radius);
+        void printTree(std::string line="|");
+        void drawCube(const Point , double h);
+        void drawOctree();
 };
 
 #endif
