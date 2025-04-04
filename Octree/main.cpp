@@ -4,7 +4,7 @@
 #include <algorithm>
 using namespace std;
 
-float angleX = 30.0f, angleY = 30.0f, cameraZ = -300.0f, cameraX=0.0f,cameraY=0.0f;
+float angleX = 30.0f, angleY = 30.0f, cameraZ = -1000.0f, cameraX=0.0f,cameraY=0.0f;
 Octree *octree=nullptr;
 
 void leerCSV(const std::string &archivo, std::vector<int> &columna1,
@@ -127,7 +127,7 @@ void initGL() {
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    gluPerspective(45.0, 1.5, 1.0, 2000.0);
+    gluPerspective(45.0, 1.5, 1.0, 4000.0);
     glMatrixMode(GL_MODELVIEW);
 
     initLighting();
@@ -141,13 +141,14 @@ int main(int argc, char** argv) {
   std::vector<int> Y;
   std::vector<int> Z;
   int N;
-  cout<<"Enter N points: "; cin>>N;
 
-  leerCSV("points1.csv", X, Y, Z);
-  // leerCSV("points2.csv", X, Y, Z);
+  leerCSV("points2.csv", X, Y, Z);
+
   Point p_aux;
   int h = get_h(X, Y, Z, p_aux);
-  cout<< p_aux<<" "<<h<<endl;
+
+  cout<<"BottomLeft: "<<p_aux<<" h: "<<h<<endl;
+  cout<<"Enter N points: "; cin>>N;
 
   octree = new Octree(p_aux, h, N);
 
@@ -158,18 +159,16 @@ int main(int argc, char** argv) {
   std::cout << "Estructura del Octree:" << std::endl;
   octree->printTree();
 
-  Point p_2find=Point(-100,-200,-500);
-  int radius=1000;
+  Point p_2find=Point(0,0,0);
+  int radius=100;
   cout<<"Point exist in the tree? ";
   cout<<octree->exist(p_2find)<<endl;
 
-  std::cout << "\nFind closest del Octree:" << std::endl;
+  std::cout << "Find closest del Octree:" << std::endl;
   Point found = octree->find_closest(p_2find, radius);
-  cout << found << " with distance: "<<p_2find.distance(found)<< endl;
+  octree->get_h_bottom(found);
 
-  double minDist = std::numeric_limits<double>::max();
-  if(found==p_2find || p_2find.distance(found) > radius)
-    cout<<"Not exist point in the range."<<endl;
+  cout<<"OCTREE BottomLeft: "<<p_aux<<" and h: "<<h<<endl;
 
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
@@ -184,6 +183,22 @@ int main(int argc, char** argv) {
   glutKeyboardFunc(keyboard2);
 
   glutMainLoop();
+
+  while (1){
+    cout<<" enter new point: ";
+    int a,b,c, radius;
+    cin>>a;
+    cin>>b;
+    cin>>c;
+    Point p_find=Point(a,b,c);
+    cin>>radius;
+    cout<<"Point exist in the tree? ";
+    cout<<octree->exist(p_find)<<endl;
+
+    std::cout << "\nFind closest del Octree:" << std::endl;
+    Point found2 = octree->find_closest(p_find, radius);
+    octree->get_h_bottom(found2);
+  }
 
   delete octree;
   return 0;

@@ -1,9 +1,9 @@
 #include "Octree.hpp"
 
 bool Point::inside(const Point &p, int h) const{
-    return p.x>=x && p.x<=x+h &&
-            p.y>=y && p.y<=y+h &&
-            p.z>=z && p.z<=z+h;
+    return p.x>=x && p.x<x+h &&
+            p.y>=y && p.y<y+h &&
+            p.z>=z && p.z<z+h;
 }
 
 double  Point::distance(const Point &p) const{
@@ -20,19 +20,19 @@ Octree::Octree(const Point &p, double height, int capacity){
 }
 
 bool Octree::exist(const Point& p) {
-    if (!points.size())
-        return false;
-
-    for(int i=0; i<points.size(); i++)
-      if (points[i] == p) 
-          return true;
-
-    for (int i = 0; i < 8; i++)
-        if (children[i] && children[i]->exist(p))
+    for (const auto& point : points) { 
+        if (point == p) 
             return true;
+    }
+
+    for (int i = 0; i < 8; i++) {
+        if (children[i] != nullptr && children[i]->exist(p))
+            return true;
+    }
 
     return false;
 }
+
 
 void Octree::insert(const Point &new_point){
     if(!bottomLeft.inside(new_point, h) || exist(new_point)){
@@ -60,8 +60,13 @@ void Octree::insert(const Point &new_point){
             }
         }
 
-        for(int i=0; i<8; i++)
-            children[i]->insert(new_point);
+        for (int i = 0; i < 8; i++) {
+            if (children[i]->bottomLeft.inside(new_point, children[i]->h)) {
+                children[i]->insert(new_point);
+                return;
+            }
+        }
+
     }
 }
 
@@ -69,7 +74,7 @@ void Octree::printTree(std::string line) {
     if (points.size()) {
       std::cout << line;
       for(int i=0; i<points.size(); i++){
-        std::cout<<points[i]<<" ";
+        std::cout<<points[i]<<" "; //" bottom: "<<bottomLeft<<" ";
       }
       std::cout<<std::endl;
     }
@@ -80,11 +85,7 @@ void Octree::printTree(std::string line) {
     }
 }
 
-
-Point Octree::find_closest(const Point &target, int radius) {
-    Point closestPoint;
-    double minDist = std::numeric_limits<double>::max();
-
+void Octree::find_closest(const Point &target, int radius, Point &closestPoint, double &minDist) {
     for (const auto &p : points) {
         double dist = p.distance(target);
         if (dist < minDist && dist <= radius) {
@@ -95,17 +96,38 @@ Point Octree::find_closest(const Point &target, int radius) {
 
     for (int i = 0; i < 8; i++) {
         if (children[i] != nullptr) {
-            Point candidate = children[i]->find_closest(target, radius);
-            double childDist = candidate.distance(target);
-            if (childDist <= minDist && candidate.init) {
-                minDist = childDist;
-                closestPoint = candidate;
-            }
+            children[i]->find_closest(target, radius, closestPoint, minDist);
         }
+    }
+}
+
+Point Octree::find_closest(const Point &target, int radius) {
+    Point closestPoint;
+    double minDist = std::numeric_limits<double>::max();
+
+    find_closest(target, radius, closestPoint, minDist);
+
+    if (!closestPoint.init) {
+        cout << "No se encontró un punto cercano." << endl;
+    } else {
+        cout << "Punto más cercano: " << closestPoint <<" with distance: "<<closestPoint.distance(target)<< endl;
     }
     return closestPoint;
 }
 
+void Octree::get_h_bottom(const Point &p){
+    for(int i=0; i<points.size(); i++){
+        if(p==points[i]){
+            cout<<"bottomLeft: "<<bottomLeft<<" h: "<<h<<endl;
+            return;
+        }
+    }
+
+    for(int i=0; i<8; i++){
+        if(children[i]!=nullptr)
+            children[i]->get_h_bottom(p);
+    }
+}
 
 void Octree::drawCube(const Point center, double h) {
     float x = center.x, y = center.y, z = center.z;
@@ -152,13 +174,22 @@ void Octree::drawCube(const Point center, double h) {
 }
 
 void Octree::drawOctree() {
-    if (points.size()==0) return;
-
-    drawCube(points[0], 50);
-
+    bool leaf = true;
     for (int i = 0; i < 8; i++) {
         if (children[i] != nullptr) {
-            children[i]->drawOctree();
+            leaf = false;
+            break;
+        }
+    }
+
+    if (leaf && h<5) {
+        drawCube(bottomLeft, h);
+        //cout<<"bottomLeft: "<<bottomLeft<<" h: "<<h<<endl;
+    } else {
+        for (int i = 0; i < 8; i++) {
+            if (children[i] != nullptr) {
+                children[i]->drawOctree();
+            }
         }
     }
 }

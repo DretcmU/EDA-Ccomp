@@ -20,6 +20,7 @@ struct Point{
         x = Ptr.x;
         y = Ptr.y;
         z = Ptr.z;
+        init = Ptr.init;
         return *this;
     }
     friend std::ostream& operator<<(std::ostream& os, const Point &p) {
@@ -46,14 +47,17 @@ class Octree {
         Point bottomLeft;
         double h;
         int nPoints; // puntos ingresados o capacidad.
+        void find_closest(const Point &target, int radius, Point &closestPoint, double &minDist);
 
     public:
         Octree();
         Octree(const Point &p, double height, int capacity);
         bool exist( const Point & );
         void insert( const Point & );
-        Point find_closest( const Point &, int radius);
+        Point find_closest(const Point &, int radius);
         void printTree(std::string line="|");
+        void get_h_bottom(const Point &p);
+        
         void drawCube(const Point , double h);
         void drawOctree();
 };
