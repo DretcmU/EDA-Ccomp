@@ -15,8 +15,9 @@ Octree::Octree(const Point &p, double height, int capacity){
     h = height;
     nPoints = capacity;
 
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 8; i++){
         children[i] = nullptr;
+    }
 }
 
 bool Octree::exist(const Point& p) {
@@ -43,20 +44,21 @@ void Octree::insert(const Point &new_point){
         points.push_back(new_point);
     }
     else{
-        if(!children[0]){
-            double mid_h = h/2;
-            int z = bottomLeft.z, index=0;
-            for(int i=0; i<2; i++){
-                int y = bottomLeft.y;
-                for(int j=0; j<2; j++){
-                    int x = bottomLeft.x;
-                    for(int k=0; k<2; k++){
-                        children[index++] = new Octree(Point(x,y,z), mid_h, nPoints);
-                        x+=mid_h;
+        if (children[0] == nullptr) {
+            double mid_h = h / 2;
+            int index = 0;
+
+            for (int i = 0; i <2; i++) {
+                for (int j = 0; j <2; j++) {
+                    for (int k = 0; k <2; k++) {
+                        Point childBottomLeft(
+                            bottomLeft.x + k * mid_h,
+                            bottomLeft.y + j * mid_h,
+                            bottomLeft.z + i * mid_h
+                        );
+                        children[index++] = new Octree(childBottomLeft, mid_h, nPoints);
                     }
-                    y+=mid_h;
                 }
-                z+=mid_h;
             }
         }
 
@@ -129,11 +131,11 @@ void Octree::get_h_bottom(const Point &p){
     }
 }
 
-void Octree::drawCube(const Point center, double h) {
-    float x = center.x, y = center.y, z = center.z;
-    glColor3f(0.0f, 0.0f, 1.0f); // Azul sólido
+void Octree::drawCube(const Point bottom, double h) {
+    float x = bottom.x, y = bottom.y, z = bottom.z;
+    glColor3f(0.0f, 0.0f, 1.0f);
     glBegin(GL_QUADS);
-    
+
     // Cara frontal
     glVertex3f(x, y, z);
     glVertex3f(x + h, y, z);
@@ -141,30 +143,35 @@ void Octree::drawCube(const Point center, double h) {
     glVertex3f(x, y + h, z);
 
     // Cara trasera
+    glColor3f(0.0f, 0.0f, 1.0f);
     glVertex3f(x, y, z + h);
     glVertex3f(x + h, y, z + h);
     glVertex3f(x + h, y + h, z + h);
     glVertex3f(x, y + h, z + h);
 
     // Cara izquierda
+    glColor3f(1.0f, 0.0f, 0.0f);
     glVertex3f(x, y, z);
     glVertex3f(x, y, z + h);
     glVertex3f(x, y + h, z + h);
     glVertex3f(x, y + h, z);
 
     // Cara derecha
+    glColor3f(1.0f, 0.0f, 0.0f);
     glVertex3f(x + h, y, z);
     glVertex3f(x + h, y, z + h);
     glVertex3f(x + h, y + h, z + h);
     glVertex3f(x + h, y + h, z);
 
     // Cara superior
+    glColor3f(0.0f, 1.0f, 0.0f);
     glVertex3f(x, y + h, z);
     glVertex3f(x + h, y + h, z);
     glVertex3f(x + h, y + h, z + h);
     glVertex3f(x, y + h, z + h);
 
     // Cara inferior
+    glColor3f(0.0f, 1.0f, 0.0f);
     glVertex3f(x, y, z);
     glVertex3f(x + h, y, z);
     glVertex3f(x + h, y, z + h);
@@ -182,7 +189,7 @@ void Octree::drawOctree() {
         }
     }
 
-    if (leaf && h<5) {
+    if (leaf && !points.empty()) {
         drawCube(bottomLeft, h);
         //cout<<"bottomLeft: "<<bottomLeft<<" h: "<<h<<endl;
     } else {
