@@ -178,20 +178,92 @@ void dbscanKdTree(vector<Point>& points, double eps, int minPts) {
 }
 
 // ---------------- MAIN ------------------
+double estimarEps(const vector<Point>& points, int k = 4) {
+    int n = points.size();
+    vector<double> k_distances;
+
+    for (int i = 0; i < n; ++i) {
+        vector<double> dists;
+        for (int j = 0; j < n; ++j) {
+            if (i == j) continue;
+            dists.push_back(distance(points[i], points[j]));
+        }
+        sort(dists.begin(), dists.end());
+        k_distances.push_back(dists[k - 1]); // distancia al k-ésimo vecino
+    }
+
+    sort(k_distances.begin(), k_distances.end(), greater<>()); // orden descendente
+
+    // Heurística simple: detectar el punto de máxima caída (mayor pendiente)
+    double max_drop = 0.0;
+    int best_index = 0;
+    for (int i = 1; i < n; ++i) {
+        double drop = k_distances[i - 1] - k_distances[i];
+        if (drop > max_drop) {
+            max_drop = drop;
+            best_index = i;
+        }
+    }
+
+    return k_distances[best_index]; // valor estimado de eps
+}
+
+double estimarEpsCodoMaximo(const vector<Point>& points, int k = 4) {
+    int n = points.size();
+    vector<double> k_distances;
+
+    // Paso 1: calcular distancia al k-ésimo vecino más cercano
+    for (int i = 0; i < n; ++i) {
+        vector<double> dists;
+        for (int j = 0; j < n; ++j) {
+            if (i == j) continue;
+            dists.push_back(distance(points[i], points[j]));
+        }
+        sort(dists.begin(), dists.end());
+        k_distances.push_back(dists[k - 1]); // distancia al k-ésimo vecino
+    }
+
+    // Paso 2: ordenar en orden ascendente
+    sort(k_distances.begin(), k_distances.end());
+
+    // Paso 3: buscar el punto con mayor cambio (pendiente máxima)
+    double max_diff = 0.0;
+    int best_index = 0;
+    for (int i = 1; i < n; ++i) {
+        double diff = k_distances[i] - k_distances[i - 1];
+        if (diff > max_diff) {
+            max_diff = diff;
+            best_index = i;
+        }
+    }
+
+    // Paso 4: retornar el eps correspondiente al punto de mayor cambio
+    return k_distances[best_index];
+}
+
+int estimarMinPts(int n_puntos, int dimensiones = 2) {
+    int valor = static_cast<int>(round(log(n_puntos) * dimensiones));
+    return std::max(3, valor); // mínimo razonable
+}
+
 
 int main() {
     vector<string> filenames = {
         "noisy_circles.csv", "noisy_moons.csv", "blobs.csv", "aniso.csv", "varied.csv"
     };
 
-    double eps = 0.1;
-    int minPts = 4;
+    double eps = 0.5;
+    int minPts = 3;
 
     for (const auto& file : filenames) {
+        auto pointsClassic = readCSV(file);
+        eps = estimarEpsCodoMaximo(pointsClassic,minPts);
+        minPts = estimarMinPts(pointsClassic.size());
+        cout<<"mejor epsilom: "<<eps<<" mejor min pts: "<<minPts<<endl;
         cout << "Procesando: " << file << endl;
 
         // DBSCAN clásico
-        auto pointsClassic = readCSV(file);
+        
         auto start1 = high_resolution_clock::now();
         dbscan(pointsClassic, eps, minPts);
         auto end1 = high_resolution_clock::now();
