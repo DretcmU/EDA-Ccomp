@@ -408,7 +408,7 @@ pair<double, int> estimarParametrosAdaptativos(const vector<Point>& puntos) {
         minPts = estimarMinPts(puntos, eps);
     }
     
-    cout<<"TIPO : "<<tipo<<endl;
+    //cout<<"TIPO : "<<tipo<<endl;
     cout<<"mejor epsilom: "<<eps<<" mejor min pts: "<<minPts<<endl;
     return {eps, minPts};
 }
@@ -423,10 +423,10 @@ int main() {
 
     for (const auto& file : filenames) {
         auto pointsClassic = readCSV(file);
-        pair<double, int> params = estimarParametrosAdaptativos(pointsClassic);
-        cout << "Procesando: " << file << endl;
-        double eps = params.first;
-        int minPts = params.second;
+        // pair<double, int> params = estimarParametrosAdaptativos(pointsClassic);
+        // cout << "Procesando: " << file << endl;
+        // double eps = params.first;
+        // int minPts = params.second;
         //eps = estimarEpsCodoMaximo(pointsClassic,minPts);
         //minPts = estimarMinPts(pointsClassic, eps);
         
