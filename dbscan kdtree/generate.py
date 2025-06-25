@@ -26,7 +26,7 @@ datasets_dict = {
 
 for name, data in datasets_dict.items():
     df = pd.DataFrame(data, columns=["x", "y"])
-    df.to_csv(name, index=False)
+    df.to_csv("datasets/"+name, index=False)
     print(f"Guardado: {name}")
 
 
@@ -37,7 +37,7 @@ titles = ["Noisy Circles", "Noisy Moons", "Blobs", "Anisotropic", "Varied"]
 filenames = list(datasets_dict.keys())
 
 for i, (title, filename) in enumerate(zip(titles, filenames)):
-    df = pd.read_csv(filename)
+    df = pd.read_csv("datasets/"+filename)
     axs[i].scatter(df["x"], df["y"], s=5)
     axs[i].set_title(title)
     axs[i].set_xlabel("x")

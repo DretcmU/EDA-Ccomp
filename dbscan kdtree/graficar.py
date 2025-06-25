@@ -18,7 +18,7 @@ fig.suptitle("Comparación DBSCAN Clásico vs DBSCAN con KD-Tree", fontsize=16)
 for i, name in enumerate(dataset_names):
     for j, suffix in enumerate(["_dbscan.csv", "_kdtree.csv"]):
         method = "DBSCAN" if j == 0 else "KDTree"
-        filename = f"{name}{suffix}"
+        filename = f"datasets/{name}{suffix}"
         path = os.path.join(base_path, filename)
         if not os.path.exists(path):
             print(f"Archivo no encontrado: {path}")

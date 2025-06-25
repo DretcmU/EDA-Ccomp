@@ -22,12 +22,14 @@ double distance(const Point& a, const Point& b) {
     return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
 }
 
-vector<Point> readCSV(const string& filename) {
+vector<Point> readCSV(const string& filename, int max_rows = -1) {
     vector<Point> points;
     ifstream file(filename);
     string line;
     getline(file, line); // saltar cabecera
+    int count = 0;
     while (getline(file, line)) {
+        if (max_rows != -1 && count >= max_rows) break;
         stringstream ss(line);
         string xStr, yStr;
         getline(ss, xStr, ',');
@@ -36,10 +38,10 @@ vector<Point> readCSV(const string& filename) {
         p.x = stod(xStr);
         p.y = stod(yStr);
         points.push_back(p);
+        count++;
     }
     return points;
 }
-
 void writeCSV(const string& filename, const vector<Point>& points) {
     ofstream out(filename);
     out << "x,y,cluster\n";
@@ -413,47 +415,92 @@ pair<double, int> estimarParametrosAdaptativos(const vector<Point>& puntos) {
     return {eps, minPts};
 }
 
+void pruebasPorTamanos(const vector<string>& filenames, const vector<int>& tamanos, const string& salida_csv) {
+    ofstream salida(salida_csv);
+    salida << "dataset,n_puntos,tiempo_clasico_ms,tiempo_kdtree_ms\n";
+
+    for (const string& file : filenames) {
+        vector<Point> todos = readCSV(file);
+        string nombre = file.substr(0, file.find('.'));
+
+        for (int tam : tamanos) {
+            if (tam > todos.size()) continue;
+
+            vector<Point> subset(todos.begin(), todos.begin() + tam);
+
+            auto params = estimarParametrosAdaptativos(subset);
+            double eps = params.first;
+            int minPts = params.second;
+
+            // Clásico
+            vector<Point> copy_clasico = subset;
+            auto start1 = high_resolution_clock::now();
+            dbscan(copy_clasico, eps, minPts);
+            auto end1 = high_resolution_clock::now();
+            long duracion_clasico = duration_cast<milliseconds>(end1 - start1).count();
+
+            // KD-Tree
+            vector<Point> copy_kd = subset;
+            auto start2 = high_resolution_clock::now();
+            dbscanKdTree(copy_kd, eps, minPts);
+            auto end2 = high_resolution_clock::now();
+            long duracion_kd = duration_cast<milliseconds>(end2 - start2).count();
+
+            salida << nombre << "," << tam << "," << duracion_clasico << "," << duracion_kd << "\n";
+        }
+    }
+
+    salida.close();
+}
+
 int main() {
     vector<string> filenames = {
-        "datasets/noisy_circles.csv", "datasets/noisy_moons.csv", 
-        "datasets/blobs.csv", "datasets/aniso.csv", "datasets/varied.csv"
-    };
+        "datasets/noisy_circles.csv", "datasets/noisy_moons.csv", "datasets/blobs.csv", 
+        "datasets/aniso.csv", "datasets/varied.csv"};
 
-    double eps = 0.5;
-    int minPts = 3;
+    vector<int> tamanos = {100, 250, 500, 1000, 1500, 2000, 2500, 3000};
+    pruebasPorTamanos(filenames, tamanos, "datasets/resultados_tiempos.csv");
 
-    for (const auto& file : filenames) {
-        auto pointsClassic = readCSV(file);
-        pair<double, int> params = estimarParametrosAdaptativos(pointsClassic);
-        cout << "Procesando: " << file << endl;
-        double eps = params.first;
-        int minPts = params.second;
-        //eps = estimarEpsCodoMaximo(pointsClassic,minPts);
-        //minPts = estimarMinPts(pointsClassic, eps);
+
+    // vector<string> filenames = {
+    //     "noisy_circles.csv", "noisy_moons.csv", "blobs.csv", "aniso.csv", "varied.csv"
+    // };
+
+    // double eps = 0.5;
+    // int minPts = 3;
+
+    // for (const auto& file : filenames) {
+    //     auto pointsClassic = readCSV(file);
+    //     // pair<double, int> params = estimarParametrosAdaptativos(pointsClassic);
+    //     // cout << "Procesando: " << file << endl;
+    //     // double eps = params.first;
+    //     // int minPts = params.second;
+    //     //eps = estimarEpsCodoMaximo(pointsClassic,minPts);
+    //     //minPts = estimarMinPts(pointsClassic, eps);
         
 
-        // DBSCAN clásico
+    //     // DBSCAN clásico
         
-        auto start1 = high_resolution_clock::now();
-        dbscan(pointsClassic, eps, minPts);
-        auto end1 = high_resolution_clock::now();
-        auto duration1 = duration_cast<milliseconds>(end1 - start1).count();
-        string outputClassic = file.substr(0, file.find('.')) + "_dbscan.csv";
-        writeCSV(outputClassic, pointsClassic);
-        cout << "DBSCAN clásico: " << duration1 << " ms -> " << outputClassic << endl;
+    //     auto start1 = high_resolution_clock::now();
+    //     dbscan(pointsClassic, eps, minPts);
+    //     auto end1 = high_resolution_clock::now();
+    //     auto duration1 = duration_cast<milliseconds>(end1 - start1).count();
+    //     string outputClassic = file.substr(0, file.find('.')) + "_dbscan.csv";
+    //     writeCSV(outputClassic, pointsClassic);
+    //     cout << "DBSCAN clásico: " << duration1 << " ms -> " << outputClassic << endl;
 
-        // DBSCAN KDTree
-        auto pointsKD = readCSV(file);
-        auto start2 = high_resolution_clock::now();
-        dbscanKdTree(pointsKD, eps, minPts);
-        auto end2 = high_resolution_clock::now();
-        auto duration2 = duration_cast<milliseconds>(end2 - start2).count();
-        string outputKD = file.substr(0, file.find('.')) + "_kdtree.csv";
-        writeCSV(outputKD, pointsKD);
-        cout << "DBSCAN KDTree:  " << duration2 << " ms -> " << outputKD << endl;
+    //     // DBSCAN KDTree
+    //     auto pointsKD = readCSV(file);
+    //     auto start2 = high_resolution_clock::now();
+    //     dbscanKdTree(pointsKD, eps, minPts);
+    //     auto end2 = high_resolution_clock::now();
+    //     auto duration2 = duration_cast<milliseconds>(end2 - start2).count();
+    //     string outputKD = file.substr(0, file.find('.')) + "_kdtree.csv";
+    //     writeCSV(outputKD, pointsKD);
+    //     cout << "DBSCAN KDTree:  " << duration2 << " ms -> " << outputKD << endl;
 
-        cout << "--------------------------------------------\n";
-    }
+    //     cout << "--------------------------------------------\n";
+    // }
 
     return 0;
 }
