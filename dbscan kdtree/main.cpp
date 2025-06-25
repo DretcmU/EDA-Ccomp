@@ -179,134 +179,6 @@ void dbscanKdTree(vector<Point>& points, double eps, int minPts) {
 }
 // ---------------- MAIN ------------------
 
-// double estimarEps(const vector<Point>& points, int k = 4) {
-//     int n = points.size();
-//     vector<double> k_distances;
-
-//     for (int i = 0; i < n; ++i) {
-//         vector<double> dists;
-//         for (int j = 0; j < n; ++j) {
-//             if (i == j) continue;
-//             dists.push_back(distance(points[i], points[j]));
-//         }
-//         sort(dists.begin(), dists.end());
-//         k_distances.push_back(dists[k - 1]);
-//     }
-
-//     sort(k_distances.begin(), k_distances.end());
-
-//     // Curvatura: distancia perpendicular al segmento entre extremos
-//     double x1 = 0, y1 = k_distances.front();
-//     double x2 = n - 1, y2 = k_distances.back();
-
-//     double max_dist = -1.0;
-//     int best_index = 0;
-//     for (int i = 0; i < n; ++i) {
-//         double xi = i, yi = k_distances[i];
-
-//         double num = abs((y2 - y1) * xi - (x2 - x1) * yi + x2*y1 - y2*x1);
-//         double den = sqrt((y2 - y1)*(y2 - y1) + (x2 - x1)*(x2 - x1));
-//         double dist = num / den;
-
-//         if (dist > max_dist) {
-//             max_dist = dist;
-//             best_index = i;
-//         }
-//     }
-
-//     return k_distances[best_index];
-// }
-
-// int estimarMinPts(const vector<Point>& points, int muestras = 100, double radio = -1.0) {
-//     if (points.empty()) return 3;
-//     int n = points.size();
-//     muestras = min(muestras, n);
-
-//     // Si no se especifica radio, usa una heurística (10% del diámetro)
-//     if (radio < 0) {
-//         double minx = points[0].x, maxx = points[0].x;
-//         double miny = points[0].y, maxy = points[0].y;
-//         for (const auto& p : points) {
-//             minx = min(minx, p.x); maxx = max(maxx, p.x);
-//             miny = min(miny, p.y); maxy = max(maxy, p.y);
-//         }
-//         double diam = sqrt((maxx - minx)*(maxx - minx) + (maxy - miny)*(maxy - miny));
-//         radio = 0.1 * diam;
-//     }
-
-//     srand(time(nullptr));
-//     int suma_vecinos = 0;
-//     for (int i = 0; i < muestras; ++i) {
-//         int idx = rand() % n;
-//         int vecinos = 0;
-//         for (int j = 0; j < n; ++j) {
-//             if (i == j) continue;
-//             if (distance(points[idx], points[j]) <= radio)
-//                 vecinos++;
-//         }
-//         suma_vecinos += vecinos;
-//     }
-
-//     int promedio = suma_vecinos / muestras;
-//     return max(3, promedio / 2); // más conservador
-// }
-
-// double estimarEps(const vector<Point>& points, int k = 4) {
-//     int n = points.size();
-//     vector<double> k_distances;
-
-//     for (int i = 0; i < n; ++i) {
-//         vector<double> dists;
-//         for (int j = 0; j < n; ++j) {
-//             if (i == j) continue;
-//             dists.push_back(distance(points[i], points[j]));
-//         }
-//         sort(dists.begin(), dists.end());
-//         k_distances.push_back(dists[k - 1]);
-//     }
-
-//     sort(k_distances.begin(), k_distances.end());
-
-//     // Buscar el punto de máxima curvatura (codo)
-//     double x1 = 0, y1 = k_distances.front();
-//     double x2 = n - 1, y2 = k_distances.back();
-
-//     double max_dist = -1.0;
-//     int best_index = 0;
-//     for (int i = 0; i < n; ++i) {
-//         double xi = i, yi = k_distances[i];
-//         double num = abs((y2 - y1) * xi - (x2 - x1) * yi + x2*y1 - y2*x1);
-//         double den = sqrt((y2 - y1)*(y2 - y1) + (x2 - x1)*(x2 - x1));
-//         double dist = num / den;
-
-//         if (dist > max_dist) {
-//             max_dist = dist;
-//             best_index = i;
-//         }
-//     }
-
-//     double eps = k_distances[best_index];
-
-//     // Analiza anisotropía del dataset (relación entre rangos x/y)
-//     double minx = points[0].x, maxx = points[0].x;
-//     double miny = points[0].y, maxy = points[0].y;
-//     for (const auto& p : points) {
-//         minx = min(minx, p.x); maxx = max(maxx, p.x);
-//         miny = min(miny, p.y); maxy = max(maxy, p.y);
-//     }
-
-//     double rx = maxx - minx;
-//     double ry = maxy - miny;
-//     double ratio = rx > ry ? rx / ry : ry / rx;
-
-//     if (ratio > 2.0) {
-//         eps *= 1.3; // ajustar si hay estiramiento significativo
-//     }
-
-//     return eps;
-// }
-
-
 double estimarEpsCodoMaximo(const vector<Point>& points, int k = 4) {
     int n = points.size();
     vector<double> k_distances;
@@ -396,47 +268,89 @@ double estimarEps(vector<Point> puntos, int minPts = 4) {
 }
 
 int estimarMinPts(const vector<Point>& puntos, double eps, int muestras = 200) {
-    if (puntos.empty()) return 3;
+    if (puntos.empty()) return 4;
 
     int n = puntos.size();
     muestras = min(muestras, n);
 
-    // Estimar vecinos para cada punto aleatorio
     vector<int> vecinos;
-    srand(time(nullptr));
+    srand(42); // reproducible
     for (int i = 0; i < muestras; ++i) {
         int idx = rand() % n;
         int count = 0;
         for (int j = 0; j < n; ++j) {
-            if (i == j) continue;
+            if (idx == j) continue;
             if (distance(puntos[idx], puntos[j]) <= eps)
                 count++;
         }
         vecinos.push_back(count);
     }
 
-    // Quitar outliers extremos
+    // Filtrar outliers (IQR)
     sort(vecinos.begin(), vecinos.end());
     int q1 = vecinos[muestras * 0.25];
     int q3 = vecinos[muestras * 0.75];
     double iqr = q3 - q1;
-    vector<int> filtrados;
 
+    vector<int> filtrados;
     for (int v : vecinos) {
         if (v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr)
             filtrados.push_back(v);
     }
 
-    // Media de los vecinos filtrados
+    // Media filtrada
     double suma = 0;
     for (int v : filtrados) suma += v;
-    int estimado = round(suma / filtrados.size());
+    int base_estimate = round(suma / filtrados.size());
 
-    // Ajustes finales
-    return max(4, estimado);
+    // === Análisis geométrico PCA ===
+    Eigen::MatrixXd X(n, 2);
+    for (int i = 0; i < n; ++i) {
+        X(i, 0) = puntos[i].x;
+        X(i, 1) = puntos[i].y;
+    }
+
+    Eigen::RowVector2d media = X.colwise().mean();
+    Eigen::MatrixXd X_centered = X.rowwise() - media;
+    Eigen::Matrix2d cov = (X_centered.transpose() * X_centered) / double(n - 1);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
+    double lambda1 = solver.eigenvalues()(1);
+    double lambda2 = solver.eigenvalues()(0);
+    double elongacion = lambda1 / lambda2;
+
+    // Bounding box
+    double minX = puntos[0].x, maxX = puntos[0].x;
+    double minY = puntos[0].y, maxY = puntos[0].y;
+    for (const auto& p : puntos) {
+        minX = min(minX, p.x); maxX = max(maxX, p.x);
+        minY = min(minY, p.y); maxY = max(maxY, p.y);
+    }
+    double bbox_ratio = max((maxX - minX) / (maxY - minY), (maxY - minY) / (maxX - minX));
+
+    int estimado_final;
+
+    // Detectar casos especiales primero
+    if (elongacion > 6.5 && bbox_ratio > 1.0 && bbox_ratio < 1.4) {
+        // ANISO: muy alargado pero estrecho
+        estimado_final = max(6, min(40, base_estimate / 2));
+    } else if (elongacion > 6.5 && bbox_ratio > 1.4) {
+        // VARIED: alargado y disperso
+        estimado_final = max(150, base_estimate * 3);
+    } else if (elongacion > 3.0 && elongacion < 6.0 && bbox_ratio > 1.6) {
+        // MOONS
+        estimado_final = max(30, min(60, base_estimate));
+    } else if (elongacion < 2.0 && bbox_ratio < 1.5) {
+        // BLOBS
+        estimado_final = max(10, min(40, base_estimate));
+    } else {
+        // General
+        double factor = 1.0 + min(1.5, max(0.0, (elongacion - 1.5) * 0.5));
+        estimado_final = round(base_estimate * factor);
+    }
+
+
+    return max(4, min(estimado_final, static_cast<int>(sqrt(n) * 4)));
 }
-
-
 int detectarTipoDeDataset(const vector<Point>& puntos) {
     if (puntos.size() < 3) return 2;
 
@@ -447,20 +361,20 @@ int detectarTipoDeDataset(const vector<Point>& puntos) {
         X(i, 1) = puntos[i].y;
     }
 
-    // Centrar los datos
+    // Centrar
     Eigen::RowVector2d media = X.colwise().mean();
     Eigen::MatrixXd X_centered = X.rowwise() - media;
 
-    // PCA: matriz de covarianza
+    // PCA
     Eigen::Matrix2d cov = (X_centered.transpose() * X_centered) / double(n - 1);
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
     auto eigenvalues = solver.eigenvalues();
-
     double lambda1 = eigenvalues(1); // mayor
     double lambda2 = eigenvalues(0); // menor
     double var_ratio = lambda1 / (lambda1 + lambda2);
+    double elongacion = lambda1 / lambda2;
 
-    // Bounding box ratio
+    // Bounding Box
     double minX = puntos[0].x, maxX = puntos[0].x;
     double minY = puntos[0].y, maxY = puntos[0].y;
     for (const auto& p : puntos) {
@@ -469,14 +383,15 @@ int detectarTipoDeDataset(const vector<Point>& puntos) {
     }
     double bbox_ratio = max((maxX - minX) / (maxY - minY), (maxY - minY) / (maxX - minX));
 
-    double elongacion = var_ratio * bbox_ratio;
+    cout << "var_ratio = " << var_ratio
+         << ", bbox_ratio = " << bbox_ratio
+         << ", elongacion = " << elongacion << "\n";
 
-    std::cout << "var_ratio = " << var_ratio << ", bbox_ratio = " << bbox_ratio << ", elongacion = " << elongacion << "\n";
+    // CRITERIOS REFORZADOS
+    if (var_ratio > 0.82 || elongacion > 1.4 || bbox_ratio > 1.6)
+        return 2; // tipo 2: blobs, varied, aniso
 
-    if (var_ratio > 0.85 || elongacion > 1.4)
-        return 2;  // tipo más estructurado o denso
-
-    return 1;  // tipo curvo, disperso o circular
+    return 1; // tipo 1: círculos, lunas
 }
 
 pair<double, int> estimarParametrosAdaptativos(const vector<Point>& puntos) {
