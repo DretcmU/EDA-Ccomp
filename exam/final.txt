@@ -1,0 +1,917 @@
+R*-Tree (R-Star Tree)
+¿Qué es?
+Una mejora del R-Tree, diseñado para minimizar el solapamiento entre nodos y lograr un acceso más eficiente en datos espaciales.
+¿Cómo funciona?
+Almacena objetos (rectángulos MBR: Minimum Bounding Rectangles) en nodos jerárquicos.
+En inserciones:
+Busca el nodo donde el nuevo MBR cause la mínima ampliación de área.
+Si hay que dividir un nodo, elige la partición óptima basada en:
+Menor solapamiento
+Menor área total
+Realiza reinsertos: si al insertar hay desbalance, puede reinsertar algunos elementos en niveles superiores.
+Ventajas:
+Menor solapamiento = menos caminos explorados en búsquedas.
+Mejor rendimiento en datos de 2D a 5D.
+
+X-Tree (eXtended Tree)
+¿Qué es?
+Una extensión del R-Tree diseñada para altas dimensiones (≥ 6), donde los R-Trees y R*-Trees ya no son eficientes.
+¿Cómo funciona?
+Al igual que R-Tree, agrupa objetos en MBRs.
+Claves del X-Tree:
+Si una división de nodo causa mucho solapamiento (por la "curse of dimensionality"), el árbol no divide el nodo: lo convierte en un supernodo más grande.
+Usa una heurística para decidir entre split y expand.
+Ventajas:
+Evita degradación del rendimiento en alta dimensión.
+Optimiza consultas de rango y búsquedas kNN en espacios de muchas dimensiones.
+
+
+
+
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <chrono>
+#include "Eigen/Dense"
+
+using namespace std;
+using namespace std::chrono;
+
+struct Point {
+    double x, y;
+    int cluster = 0; // 0 sin asignar, -1 ruido, >0 cluster
+    bool visited = false;
+};
+
+// ---------------- Utils ------------------------
+
+double distance(const Point& a, const Point& b) {
+    return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
+}
+
+vector<Point> readCSV(const string& filename) {
+    vector<Point> points;
+    ifstream file(filename);
+    string line;
+    getline(file, line); // saltar cabecera
+    while (getline(file, line)) {
+        stringstream ss(line);
+        string xStr, yStr;
+        getline(ss, xStr, ',');
+        getline(ss, yStr, ',');
+        Point p;
+        p.x = stod(xStr);
+        p.y = stod(yStr);
+        points.push_back(p);
+    }
+    return points;
+}
+
+void writeCSV(const string& filename, const vector<Point>& points) {
+    ofstream out(filename);
+    out << "x,y,cluster\n";
+    for (const auto& p : points) {
+        out << p.x << "," << p.y << "," << p.cluster << "\n";
+    }
+}
+
+// ---------------- DBSCAN clásico ------------------
+
+vector<int> regionQuery(const vector<Point>& points, int index, double eps) {
+    vector<int> neighbors;
+    for (int i = 0; i < points.size(); ++i)
+        if (distance(points[index], points[i]) <= eps)
+            neighbors.push_back(i);
+    return neighbors;
+}
+
+void expandCluster(vector<Point>& points, int index, vector<int>& neighbors,
+                   int clusterId, double eps, int minPts) {
+    points[index].cluster = clusterId;
+    for (size_t i = 0; i < neighbors.size(); ++i) {
+        int nIdx = neighbors[i];
+        if (!points[nIdx].visited) {
+            points[nIdx].visited = true;
+            auto moreNeighbors = regionQuery(points, nIdx, eps);
+            if (moreNeighbors.size() >= minPts)
+                neighbors.insert(neighbors.end(), moreNeighbors.begin(), moreNeighbors.end());
+        }
+        if (points[nIdx].cluster == 0 || points[nIdx].cluster == -1)
+            points[nIdx].cluster = clusterId;
+    }
+}
+
+void dbscan(vector<Point>& points, double eps, int minPts) {
+    int clusterId = 0;
+    for (int i = 0; i < points.size(); ++i) {
+        if (points[i].visited) continue;
+        points[i].visited = true;
+        auto neighbors = regionQuery(points, i, eps);
+        if (neighbors.size() < minPts) {
+            points[i].cluster = -1;
+        } else {
+            ++clusterId;
+            expandCluster(points, i, neighbors, clusterId, eps, minPts);
+        }
+    }
+}
+
+// ---------------- KDTree ------------------
+
+struct KDNode {
+    int index; // índice en el vector original
+    KDNode* left = nullptr;
+    KDNode* right = nullptr;
+    bool vertical;
+
+    KDNode(int idx, bool v) : index(idx), vertical(v) {}
+};
+
+class KDTree {
+public:
+    KDTree(const vector<Point>& pts) : points(pts) {
+        indices.resize(points.size());
+        for (int i = 0; i < indices.size(); ++i) indices[i] = i;
+        root = build(0, points.size(), true);
+    }
+
+    vector<int> pointsInSphere(const Point& q, double eps) const {
+        vector<int> result;
+        search(root, q, eps, result);
+        return result;
+    }
+
+private:
+    const vector<Point>& points;
+    vector<int> indices; // índices de los puntos
+    KDNode* root;
+
+    KDNode* build(int l, int r, bool vertical) {
+        if (l >= r) return nullptr;
+        int m = (l + r) / 2;
+        auto comp = [&](int a, int b) {
+            return vertical ? points[a].x < points[b].x : points[a].y < points[b].y;
+        };
+        nth_element(indices.begin() + l, indices.begin() + m, indices.begin() + r, comp);
+        KDNode* node = new KDNode(indices[m], vertical);
+        node->left = build(l, m, !vertical);
+        node->right = build(m + 1, r, !vertical);
+        return node;
+    }
+
+    void search(KDNode* node, const Point& q, double eps, vector<int>& result) const {
+        if (!node) return;
+        const Point& p = points[node->index];
+        if (distance(p, q) <= eps)
+            result.push_back(node->index);
+
+        double delta = node->vertical ? (q.x - p.x) : (q.y - p.y);
+        if (delta <= eps) search(node->left, q, eps, result);
+        if (delta >= -eps) search(node->right, q, eps, result);
+    }
+};
+
+void expandCluster(vector<Point>& points, KDTree& tree, int index, vector<int>& neighbors,
+                   int clusterId, double eps, int minPts) {
+    points[index].cluster = clusterId;
+
+    for (size_t i = 0; i < neighbors.size(); ++i) {
+        int idx = neighbors[i];
+        if (!points[idx].visited) {
+            points[idx].visited = true;
+            auto more = tree.pointsInSphere(points[idx], eps);
+            if (more.size() >= minPts)
+                neighbors.insert(neighbors.end(), more.begin(), more.end());
+        }
+        if (points[idx].cluster == 0 || points[idx].cluster == -1) {
+            points[idx].cluster = clusterId;
+        }
+    }
+}
+
+void dbscanKdTree(vector<Point>& points, double eps, int minPts) {
+    KDTree tree(points);
+    int clusterId = 0;
+    for (int i = 0; i < points.size(); ++i) {
+        if (points[i].visited) continue;
+        points[i].visited = true;
+        auto neighbors = tree.pointsInSphere(points[i], eps);
+        if (neighbors.size() < minPts) {
+            points[i].cluster = -1;
+        } else {
+            ++clusterId;
+            expandCluster(points, tree, i, neighbors, clusterId, eps, minPts);
+        }
+    }
+}
+// ---------------- MAIN ------------------
+
+double estimarEpsCodoMaximo(const vector<Point>& points, int k = 4) {
+    int n = points.size();
+    vector<double> k_distances;
+
+    for (int i = 0; i < n; ++i) {
+        vector<double> dists;
+        for (int j = 0; j < n; ++j) {
+            if (i == j) continue;
+            dists.push_back(distance(points[i], points[j]));
+        }
+        sort(dists.begin(), dists.end());
+        k_distances.push_back(dists[k - 1]);
+    }
+
+    sort(k_distances.begin(), k_distances.end());
+
+    double max_diff = 0.0;
+    int best_index = 0;
+    for (int i = 1; i < n; ++i) {
+        double diff = k_distances[i] - k_distances[i - 1];
+        if (diff > max_diff) {
+            max_diff = diff;
+            best_index = i;
+        }
+    }
+
+    return k_distances[best_index];
+}
+
+double evaluarSeparacion(const vector<Point>& puntos, const vector<int>& clusters) {
+    if (puntos.empty()) return 0.0;
+    int n = puntos.size();
+    double intra = 0, inter = 1e9;
+    int total = 0;
+
+    for (int i = 0; i < n; ++i) {
+        if (clusters[i] <= 0) continue;
+        for (int j = i + 1; j < n; ++j) {
+            if (clusters[j] <= 0) continue;
+            double d = distance(puntos[i], puntos[j]);
+            if (clusters[i] == clusters[j])
+                intra += d;
+            else
+                inter = min(inter, d);
+            total++;
+        }
+    }
+    if (total == 0) return 0;
+    intra /= total;
+    return inter / (intra + 1e-6); // mayor es mejor
+}
+
+double estimarEps(vector<Point> puntos, int minPts = 4) {
+    int n = puntos.size();
+    vector<double> k_dist;
+    for (int i = 0; i < n; ++i) {
+        vector<double> d;
+        for (int j = 0; j < n; ++j)
+            if (i != j) d.push_back(distance(puntos[i], puntos[j]));
+        sort(d.begin(), d.end());
+        k_dist.push_back(d[minPts - 1]);
+    }
+    sort(k_dist.begin(), k_dist.end());
+
+    vector<double> percentiles = {0.60, 0.65, 0.70, 0.75, 0.78, 0.80, 0.82, 0.85, 0.88, 0.90};
+
+    double bestScore = -1;
+    double bestEps = 0;
+
+    for (double perc : percentiles) {
+        double eps = k_dist[int(n * perc)];
+        for (auto& p : puntos) { p.cluster = 0; p.visited = false; }
+
+        dbscanKdTree(puntos, eps, minPts); // tu función ya implementada
+
+        vector<int> clusters;
+        for (auto& p : puntos) clusters.push_back(p.cluster);
+
+        double score = evaluarSeparacion(puntos, clusters);
+        if (score > bestScore) {
+            bestScore = score;
+            bestEps = eps;
+        }
+    }
+
+    return bestEps;
+}
+
+int estimarMinPts(const vector<Point>& puntos, double eps, int muestras = 200) {
+    if (puntos.empty()) return 4;
+
+    int n = puntos.size();
+    muestras = min(muestras, n);
+
+    vector<int> vecinos;
+    srand(42); // reproducible
+    for (int i = 0; i < muestras; ++i) {
+        int idx = rand() % n;
+        int count = 0;
+        for (int j = 0; j < n; ++j) {
+            if (idx == j) continue;
+            if (distance(puntos[idx], puntos[j]) <= eps)
+                count++;
+        }
+        vecinos.push_back(count);
+    }
+
+    // Filtrar outliers (IQR)
+    sort(vecinos.begin(), vecinos.end());
+    int q1 = vecinos[muestras * 0.25];
+    int q3 = vecinos[muestras * 0.75];
+    double iqr = q3 - q1;
+
+    vector<int> filtrados;
+    for (int v : vecinos) {
+        if (v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr)
+            filtrados.push_back(v);
+    }
+
+    // Media filtrada
+    double suma = 0;
+    for (int v : filtrados) suma += v;
+    int base_estimate = round(suma / filtrados.size());
+
+    // === Análisis geométrico PCA ===
+    Eigen::MatrixXd X(n, 2);
+    for (int i = 0; i < n; ++i) {
+        X(i, 0) = puntos[i].x;
+        X(i, 1) = puntos[i].y;
+    }
+
+    Eigen::RowVector2d media = X.colwise().mean();
+    Eigen::MatrixXd X_centered = X.rowwise() - media;
+    Eigen::Matrix2d cov = (X_centered.transpose() * X_centered) / double(n - 1);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
+    double lambda1 = solver.eigenvalues()(1);
+    double lambda2 = solver.eigenvalues()(0);
+    double elongacion = lambda1 / lambda2;
+
+    // Bounding box
+    double minX = puntos[0].x, maxX = puntos[0].x;
+    double minY = puntos[0].y, maxY = puntos[0].y;
+    for (const auto& p : puntos) {
+        minX = min(minX, p.x); maxX = max(maxX, p.x);
+        minY = min(minY, p.y); maxY = max(maxY, p.y);
+    }
+    double bbox_ratio = max((maxX - minX) / (maxY - minY), (maxY - minY) / (maxX - minX));
+
+    int estimado_final;
+
+    // Detectar casos especiales primero
+    if (elongacion > 6.5 && bbox_ratio > 1.0 && bbox_ratio < 1.4) {
+        // ANISO: muy alargado pero estrecho
+        estimado_final = max(6, min(40, base_estimate / 2));
+    } else if (elongacion > 6.5 && bbox_ratio > 1.4) {
+        // VARIED: alargado y disperso
+        estimado_final = max(150, base_estimate * 3);
+    } else if (elongacion > 3.0 && elongacion < 6.0 && bbox_ratio > 1.6) {
+        // MOONS
+        estimado_final = max(30, min(60, base_estimate));
+    } else if (elongacion < 2.0 && bbox_ratio < 1.5) {
+        // BLOBS
+        estimado_final = max(10, min(40, base_estimate));
+    } else {
+        // General
+        double factor = 1.0 + min(1.5, max(0.0, (elongacion - 1.5) * 0.5));
+        estimado_final = round(base_estimate * factor);
+    }
+
+
+    return max(4, min(estimado_final, static_cast<int>(sqrt(n) * 4)));
+}
+int detectarTipoDeDataset(const vector<Point>& puntos) {
+    if (puntos.size() < 3) return 2;
+
+    int n = puntos.size();
+    Eigen::MatrixXd X(n, 2);
+    for (int i = 0; i < n; ++i) {
+        X(i, 0) = puntos[i].x;
+        X(i, 1) = puntos[i].y;
+    }
+
+    // Centrar
+    Eigen::RowVector2d media = X.colwise().mean();
+    Eigen::MatrixXd X_centered = X.rowwise() - media;
+
+    // PCA
+    Eigen::Matrix2d cov = (X_centered.transpose() * X_centered) / double(n - 1);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
+    auto eigenvalues = solver.eigenvalues();
+    double lambda1 = eigenvalues(1); // mayor
+    double lambda2 = eigenvalues(0); // menor
+    double var_ratio = lambda1 / (lambda1 + lambda2);
+    double elongacion = lambda1 / lambda2;
+
+    // Bounding Box
+    double minX = puntos[0].x, maxX = puntos[0].x;
+    double minY = puntos[0].y, maxY = puntos[0].y;
+    for (const auto& p : puntos) {
+        minX = min(minX, p.x); maxX = max(maxX, p.x);
+        minY = min(minY, p.y); maxY = max(maxY, p.y);
+    }
+    double bbox_ratio = max((maxX - minX) / (maxY - minY), (maxY - minY) / (maxX - minX));
+
+    cout << "var_ratio = " << var_ratio
+         << ", bbox_ratio = " << bbox_ratio
+         << ", elongacion = " << elongacion << "\n";
+
+    // CRITERIOS REFORZADOS
+    if (var_ratio > 0.82 || elongacion > 1.4 || bbox_ratio > 1.6)
+        return 2; // tipo 2: blobs, varied, aniso
+
+    return 1; // tipo 1: círculos, lunas
+}
+
+pair<double, int> estimarParametrosAdaptativos(const vector<Point>& puntos) {
+    int tipo = detectarTipoDeDataset(puntos);
+    double eps;
+    int minPts;
+
+    if (tipo == 1) {
+        eps = estimarEpsCodoMaximo(puntos, 4);
+        minPts = 4;
+    } else {
+        minPts = estimarMinPts(puntos, 0.5);
+        eps = estimarEps(puntos, minPts);
+        minPts = estimarMinPts(puntos, eps);
+    }
+    
+    //cout<<"TIPO : "<<tipo<<endl;
+    cout<<"mejor epsilom: "<<eps<<" mejor min pts: "<<minPts<<endl;
+    return {eps, minPts};
+}
+
+int main() {
+    vector<string> filenames = {
+        "datasets/noisy_circles.csv", "datasets/noisy_moons.csv", 
+        "datasets/blobs.csv", "datasets/aniso.csv", "datasets/varied.csv"
+    };
+
+    double eps = 0.5;
+    int minPts = 3;
+
+    for (const auto& file : filenames) {
+        auto pointsClassic = readCSV(file);
+        pair<double, int> params = estimarParametrosAdaptativos(pointsClassic);
+        cout << "Procesando: " << file << endl;
+        double eps = params.first;
+        int minPts = params.second;
+        //eps = estimarEpsCodoMaximo(pointsClassic,minPts);
+        //minPts = estimarMinPts(pointsClassic, eps);
+        
+
+        // DBSCAN clásico
+        
+        auto start1 = high_resolution_clock::now();
+        dbscan(pointsClassic, eps, minPts);
+        auto end1 = high_resolution_clock::now();
+        auto duration1 = duration_cast<milliseconds>(end1 - start1).count();
+        string outputClassic = file.substr(0, file.find('.')) + "_dbscan.csv";
+        writeCSV(outputClassic, pointsClassic);
+        cout << "DBSCAN clásico: " << duration1 << " ms -> " << outputClassic << endl;
+
+        // DBSCAN KDTree
+        auto pointsKD = readCSV(file);
+        auto start2 = high_resolution_clock::now();
+        dbscanKdTree(pointsKD, eps, minPts);
+        auto end2 = high_resolution_clock::now();
+        auto duration2 = duration_cast<milliseconds>(end2 - start2).count();
+        string outputKD = file.substr(0, file.find('.')) + "_kdtree.csv";
+        writeCSV(outputKD, pointsKD);
+        cout << "DBSCAN KDTree:  " << duration2 << " ms -> " << outputKD << endl;
+
+        cout << "--------------------------------------------\n";
+    }
+
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <random>
+#include <algorithm>
+#include <sstream>
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <string>
+#include <chrono>
+
+using namespace std;
+
+struct Punto {
+    float x, y;
+    int indice;
+
+    bool operator==(const Punto& otro) const {
+        return x == otro.x && y == otro.y;
+    }
+};
+
+float distancia(const Punto& a, const Punto& b) {
+    return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
+}
+
+struct NodoKD {
+    Punto punto;
+    unique_ptr<NodoKD> izquierda;
+    unique_ptr<NodoKD> derecha;
+
+    NodoKD(Punto p) : punto(p), izquierda(nullptr), derecha(nullptr) {}
+};
+
+class KDTree {
+private:
+    unique_ptr<NodoKD> raiz;
+
+    void insertarRec(unique_ptr<NodoKD>& nodo, const Punto& punto, int profundidad) {
+        if (!nodo) {
+            nodo = make_unique<NodoKD>(punto);
+            return;
+        }
+
+        int eje = profundidad % 2;
+        if ((eje == 0 && punto.x < nodo->punto.x) || (eje == 1 && punto.y < nodo->punto.y))
+            insertarRec(nodo->izquierda, punto, profundidad + 1);
+        else
+            insertarRec(nodo->derecha, punto, profundidad + 1);
+    }
+
+    void nearestNeighborRec(NodoKD* nodo, const Punto& objetivo, int profundidad,
+                            Punto& mejor, double& mejorDistancia) const {
+        if (!nodo) return;
+
+        double d = distancia(objetivo, nodo->punto);
+        if (d < mejorDistancia) {
+            mejorDistancia = d;
+            mejor = nodo->punto;
+        }
+
+        int eje = profundidad % 2;
+        NodoKD* ladoPrimario = nullptr;
+        NodoKD* ladoSecundario = nullptr;
+
+        if ((eje == 0 && objetivo.x < nodo->punto.x) || (eje == 1 && objetivo.y < nodo->punto.y)) {
+            ladoPrimario = nodo->izquierda.get();
+            ladoSecundario = nodo->derecha.get();
+        } else {
+            ladoPrimario = nodo->derecha.get();
+            ladoSecundario = nodo->izquierda.get();
+        }
+
+        nearestNeighborRec(ladoPrimario, objetivo, profundidad + 1, mejor, mejorDistancia);
+
+        // Verifica si vale la pena buscar en el otro lado
+        double distanciaEje = (eje == 0) ? abs(objetivo.x - nodo->punto.x) : abs(objetivo.y - nodo->punto.y);
+        if (distanciaEje < mejorDistancia) {
+            nearestNeighborRec(ladoSecundario, objetivo, profundidad + 1, mejor, mejorDistancia);
+        }
+    }
+
+public:
+    void insertar(const Punto& punto) {
+        insertarRec(raiz, punto, 0);
+    }
+
+    int nearestNeighborIndex(const Punto& objetivo) const {
+        if (!raiz) return -1;
+
+        Punto mejor = raiz->punto;
+        double mejorDistancia = distancia(objetivo, mejor);
+
+        nearestNeighborRec(raiz.get(), objetivo, 0, mejor, mejorDistancia);
+
+        return mejor.indice;
+    }
+};
+
+pair<vector<Punto>, vector<int>> kmeans(vector<Punto>& puntos, int k, int max_iter = 100, bool guardar_csv = false, const string& nombre_csv = "evolucion_kdtree.csv") {
+    int n = puntos.size();
+    if (k > n) throw invalid_argument("k no puede ser mayor a la cantidad de puntos");
+
+    random_device rd;
+    mt19937 gen(rd());
+    shuffle(puntos.begin(), puntos.end(), gen);
+
+    vector<Punto> centroides;
+    for (int i = 0; i < k; i++) {
+        Punto c = puntos[i];
+        c.indice = i;
+        centroides.push_back(c);
+    }
+
+    vector<int> asignaciones(n, -1);
+    vector<int> cambios_por_iteracion;
+
+    for (int iter = 0; iter < max_iter; iter++) {
+        KDTree kd;
+        for (const auto& c : centroides) {
+            kd.insertar(c);
+        }
+
+        bool hubo_cambio = false;
+
+        for (int i = 0; i < n; i++) {
+            int centroide_mas_cercano = kd.nearestNeighborIndex(puntos[i]);
+            if (asignaciones[i] != centroide_mas_cercano) {
+                asignaciones[i] = centroide_mas_cercano;
+                hubo_cambio = true;
+            }
+        }
+
+        if (!hubo_cambio) break;
+
+        vector<Punto> nuevos_centroides(k, {0, 0, 0});
+        vector<int> conteo(k, 0);
+
+        for (int i = 0; i < n; i++) {
+            int c = asignaciones[i];
+            nuevos_centroides[c].x += puntos[i].x;
+            nuevos_centroides[c].y += puntos[i].y;
+            conteo[c]++;
+        }
+
+        int centroides_movidos = 0;
+        for (int i = 0; i < k; i++) {
+            if (conteo[i] > 0) {
+                nuevos_centroides[i].x /= conteo[i];
+                nuevos_centroides[i].y /= conteo[i];
+            } else {
+                nuevos_centroides[i] = centroides[i];
+            }
+
+            // Contar cambios de posición
+            if (nuevos_centroides[i].x != centroides[i].x || nuevos_centroides[i].y != centroides[i].y) {
+                centroides_movidos++;
+            }
+
+            nuevos_centroides[i].indice = i;
+        }
+
+        cambios_por_iteracion.push_back(centroides_movidos);
+        centroides = nuevos_centroides;
+    }
+
+    if (guardar_csv) {
+        ofstream file(nombre_csv);
+        file << "iteracion,centroides_movidos\n";
+        for (int i = 0; i < cambios_por_iteracion.size(); ++i) {
+            file << i << "," << cambios_por_iteracion[i] << "\n";
+        }
+        file.close();
+    }
+
+    return {centroides, asignaciones};
+}
+
+
+vector<Punto> leerCSV(const string& nombreArchivo) {
+    vector<Punto> puntos;
+    ifstream archivo(nombreArchivo);
+    if (!archivo.is_open()) {
+        cerr << "Error al abrir el archivo: " << nombreArchivo << "\n";  // <--- Verifica apertura
+        return puntos;
+    }
+    string linea;
+    int indice = 0;
+
+    getline(archivo, linea); // Salta encabezado
+
+    while (getline(archivo, linea)) {
+        stringstream ss(linea);
+        string xStr, yStr;
+
+        if (getline(ss, xStr, ',') && getline(ss, yStr, ',')) {
+            Punto p;
+            p.x = stof(xStr);  // Cambié a stof por ser float
+            p.y = stof(yStr);
+            p.indice = indice++;
+            puntos.push_back(p);
+        }
+    }
+
+    return puntos;
+}
+
+
+
+// struct Punto {
+//     float x, y;
+//     int indice = -1;
+// };
+
+// float distancia(const Punto& a, const Punto& b) {
+//     float dx = a.x - b.x;
+//     float dy = a.y - b.y;
+//     return dx * dx + dy * dy; 
+// }
+
+pair<vector<Punto>, vector<int>> kmeans_fuerza_bruta(vector<Punto>& puntos, int k, int max_iter = 100, bool guardar_csv = false, const string& nombre_csv = "evolucion_centroides.csv") {
+    int n = puntos.size();
+    if (k > n) throw invalid_argument("k no puede ser mayor a la cantidad de puntos");
+
+    random_device rd;
+    mt19937 gen(rd());
+    shuffle(puntos.begin(), puntos.end(), gen);
+
+    vector<Punto> centroides;
+    for (int i = 0; i < k; i++) {
+        Punto c = puntos[i];
+        c.indice = i;
+        centroides.push_back(c);
+    }
+
+    vector<int> asignaciones(n, -1);
+    vector<int> cambios_por_iteracion;
+
+    for (int iter = 0; iter < max_iter; iter++) {
+        bool hubo_cambio = false;
+
+        // Paso 1: asignación de puntos al centroide más cercano
+        for (int i = 0; i < n; i++) {
+            float min_dist = numeric_limits<float>::max();
+            int centroide_mas_cercano = -1;
+
+            for (int j = 0; j < k; j++) {
+                float d = distancia(puntos[i], centroides[j]);
+                if (d < min_dist) {
+                    min_dist = d;
+                    centroide_mas_cercano = j;
+                }
+            }
+
+            if (asignaciones[i] != centroide_mas_cercano) {
+                asignaciones[i] = centroide_mas_cercano;
+                hubo_cambio = true;
+            }
+        }
+
+        if (!hubo_cambio) break;
+
+        // Paso 2: actualizar centroides
+        vector<Punto> nuevos_centroides(k, {0, 0, 0});
+        vector<int> conteo(k, 0);
+
+        for (int i = 0; i < n; i++) {
+            int c = asignaciones[i];
+            nuevos_centroides[c].x += puntos[i].x;
+            nuevos_centroides[c].y += puntos[i].y;
+            conteo[c]++;
+        }
+
+        int centroides_movidos = 0;
+        for (int i = 0; i < k; i++) {
+            if (conteo[i] > 0) {
+                nuevos_centroides[i].x /= conteo[i];
+                nuevos_centroides[i].y /= conteo[i];
+            } else {
+                nuevos_centroides[i] = centroides[i];
+            }
+
+            // contar si el centroide se movió
+            if (nuevos_centroides[i].x != centroides[i].x || nuevos_centroides[i].y != centroides[i].y) {
+                centroides_movidos++;
+            }
+
+            nuevos_centroides[i].indice = i;
+        }
+
+        cambios_por_iteracion.push_back(centroides_movidos);
+        centroides = nuevos_centroides;
+    }
+
+    // Guardar CSV si se solicita
+    if (guardar_csv) {
+        ofstream file(nombre_csv);
+        file << "iteracion,centroides_movidos\n";
+        for (int i = 0; i < cambios_por_iteracion.size(); ++i) {
+            file << i << "," << cambios_por_iteracion[i] << "\n";
+        }
+        file.close();
+    }
+
+    return {centroides, asignaciones};
+}
+
+
+
+void guardarTiempoCSV(const string& filename, const vector<tuple<int, int, double>>& tiempos) {
+    ofstream out(filename);
+    out << "n,k,tiempo_ms\n";
+    for (const auto& [n, k, tiempo] : tiempos) {
+        out << n << "," << k << "," << tiempo << "\n";
+    }
+}
+
+int main() {
+    vector<int> n_vals = {1000, 1150, 1300, 1450, 1600, 1750, 1900, 2050, 2200, 2400};
+    vector<int> k_vals = {5, 15, 25, 50, 75};
+
+    vector<Punto> puntos = leerCSV("points2d.csv");
+    cout << "Total puntos leídos: " << puntos.size() << "\n";
+
+    for(int i=1;i<11;i++){
+        string title = "Test_" + to_string(i) + ".csv";
+        auto resultado = kmeans(puntos, 18,100, true,title);
+        title = "Test_force_" + to_string(i) + ".csv";
+        auto resultado2 = kmeans_fuerza_bruta(puntos, 18,100,true,title);
+    }
+
+    vector<tuple<int, int, double>> tiempos;
+
+    for (int k : k_vals) {
+
+        for (int n : n_vals) {
+            if (k >= n) continue;
+            if (n > (int)puntos.size()) continue;
+            vector<Punto> subpuntos(puntos.begin(), puntos.begin() + n);
+
+            cout << "Ejecutando KMeans con n = " << n << ", k = " << k << "...\n";
+
+            auto inicio = chrono::high_resolution_clock::now();
+            auto resultado = kmeans(subpuntos, k);
+            auto fin = chrono::high_resolution_clock::now();
+
+            double tiempo_ms = chrono::duration<double, std::milli>(fin - inicio).count();
+            tiempos.push_back({n, k, tiempo_ms});
+
+            //string nombre_archivo = "resultado_n" + to_string(n) + "_k" + to_string(k) + ".csv";
+        }
+    }
+
+    guardarTiempoCSV("tiempos.csv", tiempos);
+
+    // Fuerza Bruta KMeans
+    vector<tuple<int, int, double>> tiempos_fuerza_bruta;
+
+    for (int k : k_vals) {
+    
+        for (int n : n_vals) {
+            if (k >= n) continue;
+            if (n > (int)puntos.size()) continue;
+            vector<Punto> subpuntos(puntos.begin(), puntos.begin() + n);
+            
+            cout << "[FuerzaBruta] Ejecutando KMeans con n = " << n << ", k = " << k << "...\n";
+    
+            auto inicio = chrono::high_resolution_clock::now();
+            auto resultado = kmeans_fuerza_bruta(subpuntos, k);
+            auto fin = chrono::high_resolution_clock::now();
+    
+            double tiempo_ms = chrono::duration<double, std::milli>(fin - inicio).count();
+            tiempos_fuerza_bruta.push_back({n, k, tiempo_ms});
+        }
+    }
+    
+    guardarTiempoCSV("fuerza_bruta.csv", tiempos_fuerza_bruta);
+    
+    return 0;
+}
+
+
+
+
+
+double estimarEpsCodoSimple(const vector<Point>& puntos, int k = 4) {
+    vector<double> k_distances;
+
+    for (int i = 0; i < puntos.size(); ++i) {
+        vector<double> dists;
+        for (int j = 0; j < puntos.size(); ++j) {
+            if (i == j) continue;
+            dists.push_back(distance(puntos[i], puntos[j]));
+        }
+        sort(dists.begin(), dists.end());
+        k_distances.push_back(dists[k - 1]);  // distancia al k-ésimo vecino más cercano
+    }
+
+    sort(k_distances.begin(), k_distances.end());
+
+    // Elegir el percentil 90% como aproximación del codo (puedes ajustar)
+    int idx = int(k_distances.size() * 0.9);
+    return k_distances[idx];
+}
+
+
+
+
+
+
+
+
+
+
+
