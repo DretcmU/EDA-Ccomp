@@ -1,917 +1,475 @@
-R*-Tree (R-Star Tree)
-¿Qué es?
-Una mejora del R-Tree, diseñado para minimizar el solapamiento entre nodos y lograr un acceso más eficiente en datos espaciales.
-¿Cómo funciona?
-Almacena objetos (rectángulos MBR: Minimum Bounding Rectangles) en nodos jerárquicos.
-En inserciones:
-Busca el nodo donde el nuevo MBR cause la mínima ampliación de área.
-Si hay que dividir un nodo, elige la partición óptima basada en:
-Menor solapamiento
-Menor área total
-Realiza reinsertos: si al insertar hay desbalance, puede reinsertar algunos elementos en niveles superiores.
-Ventajas:
-Menor solapamiento = menos caminos explorados en búsquedas.
-Mejor rendimiento en datos de 2D a 5D.
-
-X-Tree (eXtended Tree)
-¿Qué es?
-Una extensión del R-Tree diseñada para altas dimensiones (≥ 6), donde los R-Trees y R*-Trees ya no son eficientes.
-¿Cómo funciona?
-Al igual que R-Tree, agrupa objetos en MBRs.
-Claves del X-Tree:
-Si una división de nodo causa mucho solapamiento (por la "curse of dimensionality"), el árbol no divide el nodo: lo convierte en un supernodo más grande.
-Usa una heurística para decidir entre split y expand.
-Ventajas:
-Evita degradación del rendimiento en alta dimensión.
-Optimiza consultas de rango y búsquedas kNN en espacios de muchas dimensiones.
-
-
-
-
-
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <vector>
-#include <cmath>
-#include <algorithm>
-#include <chrono>
-#include "Eigen/Dense"
-
-using namespace std;
-using namespace std::chrono;
-
-struct Point {
-    double x, y;
-    int cluster = 0; // 0 sin asignar, -1 ruido, >0 cluster
-    bool visited = false;
-};
-
-// ---------------- Utils ------------------------
-
-double distance(const Point& a, const Point& b) {
-    return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
+// Alexander Carpio Mamani - Lab 07 Pthreads
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <ctype.h>
+#include <string.h>
+#include <unistd.h>
+ 
+#define MAX_THREADS 100
+ 
+pthread_t threads[MAX_THREADS];
+int thread_count = 0;
+int thread_ids[MAX_THREADS];
+int running_threads = 1;
+ 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+int is_positive_integer(const char *str) {
+    if (*str == '\0') return 0;
+    for (int i = 0; str[i]; i++) {
+        if (!isdigit(str[i])) return 0;
+    }
+    return atoi(str) > 0;
 }
 
-vector<Point> readCSV(const string& filename) {
-    vector<Point> points;
-    ifstream file(filename);
-    string line;
-    getline(file, line); // saltar cabecera
-    while (getline(file, line)) {
-        stringstream ss(line);
-        string xStr, yStr;
-        getline(ss, xStr, ',');
-        getline(ss, yStr, ',');
-        Point p;
-        p.x = stod(xStr);
-        p.y = stod(yStr);
-        points.push_back(p);
-    }
-    return points;
+int fibonacci(int n) {
+    if (n <= 1) return n;
+    return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-void writeCSV(const string& filename, const vector<Point>& points) {
-    ofstream out(filename);
-    out << "x,y,cluster\n";
-    for (const auto& p : points) {
-        out << p.x << "," << p.y << "," << p.cluster << "\n";
-    }
+void* print_name(void* arg) {
+    int id = *(int*)arg;
+    printf("Thread ID: %d - My name is Alexander\n", id);
+    pthread_exit(NULL);
 }
+ 
 
-// ---------------- DBSCAN clásico ------------------
-
-vector<int> regionQuery(const vector<Point>& points, int index, double eps) {
-    vector<int> neighbors;
-    for (int i = 0; i < points.size(); ++i)
-        if (distance(points[index], points[i]) <= eps)
-            neighbors.push_back(i);
-    return neighbors;
+void* print_fibonacci(void* arg) {
+    int id = thread_ids[thread_count - 1];
+    int n = *(int*)arg;
+    free(arg);
+ 
+    int result = fibonacci(n);
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0) {
+        printf("Thread ID: %d - Fibonacci Number for %d: %d\n", id, n, result);
+   }
+ 
+    pthread_exit(NULL);
 }
+ 
 
-void expandCluster(vector<Point>& points, int index, vector<int>& neighbors,
-                   int clusterId, double eps, int minPts) {
-    points[index].cluster = clusterId;
-    for (size_t i = 0; i < neighbors.size(); ++i) {
-        int nIdx = neighbors[i];
-        if (!points[nIdx].visited) {
-            points[nIdx].visited = true;
-            auto moreNeighbors = regionQuery(points, nIdx, eps);
-            if (moreNeighbors.size() >= minPts)
-                neighbors.insert(neighbors.end(), moreNeighbors.begin(), moreNeighbors.end());
-        }
-        if (points[nIdx].cluster == 0 || points[nIdx].cluster == -1)
-            points[nIdx].cluster = clusterId;
+void create_thread(void* (*func)(void*), void* arg) {
+    if (thread_count >= MAX_THREADS) {
+        printf("Error: número máximo de hilos alcanzado.\n");
+        return;
     }
+ 
+    pthread_mutex_lock(&mutex);
+    thread_ids[thread_count] = thread_count;
+    pthread_create(&threads[thread_count], NULL, func, arg);
+    thread_count++;
+    pthread_mutex_unlock(&mutex);
 }
-
-void dbscan(vector<Point>& points, double eps, int minPts) {
-    int clusterId = 0;
-    for (int i = 0; i < points.size(); ++i) {
-        if (points[i].visited) continue;
-        points[i].visited = true;
-        auto neighbors = regionQuery(points, i, eps);
-        if (neighbors.size() < minPts) {
-            points[i].cluster = -1;
-        } else {
-            ++clusterId;
-            expandCluster(points, i, neighbors, clusterId, eps, minPts);
-        }
-    }
-}
-
-// ---------------- KDTree ------------------
-
-struct KDNode {
-    int index; // índice en el vector original
-    KDNode* left = nullptr;
-    KDNode* right = nullptr;
-    bool vertical;
-
-    KDNode(int idx, bool v) : index(idx), vertical(v) {}
-};
-
-class KDTree {
-public:
-    KDTree(const vector<Point>& pts) : points(pts) {
-        indices.resize(points.size());
-        for (int i = 0; i < indices.size(); ++i) indices[i] = i;
-        root = build(0, points.size(), true);
-    }
-
-    vector<int> pointsInSphere(const Point& q, double eps) const {
-        vector<int> result;
-        search(root, q, eps, result);
-        return result;
-    }
-
-private:
-    const vector<Point>& points;
-    vector<int> indices; // índices de los puntos
-    KDNode* root;
-
-    KDNode* build(int l, int r, bool vertical) {
-        if (l >= r) return nullptr;
-        int m = (l + r) / 2;
-        auto comp = [&](int a, int b) {
-            return vertical ? points[a].x < points[b].x : points[a].y < points[b].y;
-        };
-        nth_element(indices.begin() + l, indices.begin() + m, indices.begin() + r, comp);
-        KDNode* node = new KDNode(indices[m], vertical);
-        node->left = build(l, m, !vertical);
-        node->right = build(m + 1, r, !vertical);
-        return node;
-    }
-
-    void search(KDNode* node, const Point& q, double eps, vector<int>& result) const {
-        if (!node) return;
-        const Point& p = points[node->index];
-        if (distance(p, q) <= eps)
-            result.push_back(node->index);
-
-        double delta = node->vertical ? (q.x - p.x) : (q.y - p.y);
-        if (delta <= eps) search(node->left, q, eps, result);
-        if (delta >= -eps) search(node->right, q, eps, result);
-    }
-};
-
-void expandCluster(vector<Point>& points, KDTree& tree, int index, vector<int>& neighbors,
-                   int clusterId, double eps, int minPts) {
-    points[index].cluster = clusterId;
-
-    for (size_t i = 0; i < neighbors.size(); ++i) {
-        int idx = neighbors[i];
-        if (!points[idx].visited) {
-            points[idx].visited = true;
-            auto more = tree.pointsInSphere(points[idx], eps);
-            if (more.size() >= minPts)
-                neighbors.insert(neighbors.end(), more.begin(), more.end());
-        }
-        if (points[idx].cluster == 0 || points[idx].cluster == -1) {
-            points[idx].cluster = clusterId;
-        }
-    }
-}
-
-void dbscanKdTree(vector<Point>& points, double eps, int minPts) {
-    KDTree tree(points);
-    int clusterId = 0;
-    for (int i = 0; i < points.size(); ++i) {
-        if (points[i].visited) continue;
-        points[i].visited = true;
-        auto neighbors = tree.pointsInSphere(points[i], eps);
-        if (neighbors.size() < minPts) {
-            points[i].cluster = -1;
-        } else {
-            ++clusterId;
-            expandCluster(points, tree, i, neighbors, clusterId, eps, minPts);
-        }
-    }
-}
-// ---------------- MAIN ------------------
-
-double estimarEpsCodoMaximo(const vector<Point>& points, int k = 4) {
-    int n = points.size();
-    vector<double> k_distances;
-
-    for (int i = 0; i < n; ++i) {
-        vector<double> dists;
-        for (int j = 0; j < n; ++j) {
-            if (i == j) continue;
-            dists.push_back(distance(points[i], points[j]));
-        }
-        sort(dists.begin(), dists.end());
-        k_distances.push_back(dists[k - 1]);
-    }
-
-    sort(k_distances.begin(), k_distances.end());
-
-    double max_diff = 0.0;
-    int best_index = 0;
-    for (int i = 1; i < n; ++i) {
-        double diff = k_distances[i] - k_distances[i - 1];
-        if (diff > max_diff) {
-            max_diff = diff;
-            best_index = i;
-        }
-    }
-
-    return k_distances[best_index];
-}
-
-double evaluarSeparacion(const vector<Point>& puntos, const vector<int>& clusters) {
-    if (puntos.empty()) return 0.0;
-    int n = puntos.size();
-    double intra = 0, inter = 1e9;
-    int total = 0;
-
-    for (int i = 0; i < n; ++i) {
-        if (clusters[i] <= 0) continue;
-        for (int j = i + 1; j < n; ++j) {
-            if (clusters[j] <= 0) continue;
-            double d = distance(puntos[i], puntos[j]);
-            if (clusters[i] == clusters[j])
-                intra += d;
-            else
-                inter = min(inter, d);
-            total++;
-        }
-    }
-    if (total == 0) return 0;
-    intra /= total;
-    return inter / (intra + 1e-6); // mayor es mejor
-}
-
-double estimarEps(vector<Point> puntos, int minPts = 4) {
-    int n = puntos.size();
-    vector<double> k_dist;
-    for (int i = 0; i < n; ++i) {
-        vector<double> d;
-        for (int j = 0; j < n; ++j)
-            if (i != j) d.push_back(distance(puntos[i], puntos[j]));
-        sort(d.begin(), d.end());
-        k_dist.push_back(d[minPts - 1]);
-    }
-    sort(k_dist.begin(), k_dist.end());
-
-    vector<double> percentiles = {0.60, 0.65, 0.70, 0.75, 0.78, 0.80, 0.82, 0.85, 0.88, 0.90};
-
-    double bestScore = -1;
-    double bestEps = 0;
-
-    for (double perc : percentiles) {
-        double eps = k_dist[int(n * perc)];
-        for (auto& p : puntos) { p.cluster = 0; p.visited = false; }
-
-        dbscanKdTree(puntos, eps, minPts); // tu función ya implementada
-
-        vector<int> clusters;
-        for (auto& p : puntos) clusters.push_back(p.cluster);
-
-        double score = evaluarSeparacion(puntos, clusters);
-        if (score > bestScore) {
-            bestScore = score;
-            bestEps = eps;
-        }
-    }
-
-    return bestEps;
-}
-
-int estimarMinPts(const vector<Point>& puntos, double eps, int muestras = 200) {
-    if (puntos.empty()) return 4;
-
-    int n = puntos.size();
-    muestras = min(muestras, n);
-
-    vector<int> vecinos;
-    srand(42); // reproducible
-    for (int i = 0; i < muestras; ++i) {
-        int idx = rand() % n;
-        int count = 0;
-        for (int j = 0; j < n; ++j) {
-            if (idx == j) continue;
-            if (distance(puntos[idx], puntos[j]) <= eps)
-                count++;
-        }
-        vecinos.push_back(count);
-    }
-
-    // Filtrar outliers (IQR)
-    sort(vecinos.begin(), vecinos.end());
-    int q1 = vecinos[muestras * 0.25];
-    int q3 = vecinos[muestras * 0.75];
-    double iqr = q3 - q1;
-
-    vector<int> filtrados;
-    for (int v : vecinos) {
-        if (v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr)
-            filtrados.push_back(v);
-    }
-
-    // Media filtrada
-    double suma = 0;
-    for (int v : filtrados) suma += v;
-    int base_estimate = round(suma / filtrados.size());
-
-    // === Análisis geométrico PCA ===
-    Eigen::MatrixXd X(n, 2);
-    for (int i = 0; i < n; ++i) {
-        X(i, 0) = puntos[i].x;
-        X(i, 1) = puntos[i].y;
-    }
-
-    Eigen::RowVector2d media = X.colwise().mean();
-    Eigen::MatrixXd X_centered = X.rowwise() - media;
-    Eigen::Matrix2d cov = (X_centered.transpose() * X_centered) / double(n - 1);
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
-    double lambda1 = solver.eigenvalues()(1);
-    double lambda2 = solver.eigenvalues()(0);
-    double elongacion = lambda1 / lambda2;
-
-    // Bounding box
-    double minX = puntos[0].x, maxX = puntos[0].x;
-    double minY = puntos[0].y, maxY = puntos[0].y;
-    for (const auto& p : puntos) {
-        minX = min(minX, p.x); maxX = max(maxX, p.x);
-        minY = min(minY, p.y); maxY = max(maxY, p.y);
-    }
-    double bbox_ratio = max((maxX - minX) / (maxY - minY), (maxY - minY) / (maxX - minX));
-
-    int estimado_final;
-
-    // Detectar casos especiales primero
-    if (elongacion > 6.5 && bbox_ratio > 1.0 && bbox_ratio < 1.4) {
-        // ANISO: muy alargado pero estrecho
-        estimado_final = max(6, min(40, base_estimate / 2));
-    } else if (elongacion > 6.5 && bbox_ratio > 1.4) {
-        // VARIED: alargado y disperso
-        estimado_final = max(150, base_estimate * 3);
-    } else if (elongacion > 3.0 && elongacion < 6.0 && bbox_ratio > 1.6) {
-        // MOONS
-        estimado_final = max(30, min(60, base_estimate));
-    } else if (elongacion < 2.0 && bbox_ratio < 1.5) {
-        // BLOBS
-        estimado_final = max(10, min(40, base_estimate));
-    } else {
-        // General
-        double factor = 1.0 + min(1.5, max(0.0, (elongacion - 1.5) * 0.5));
-        estimado_final = round(base_estimate * factor);
-    }
-
-
-    return max(4, min(estimado_final, static_cast<int>(sqrt(n) * 4)));
-}
-int detectarTipoDeDataset(const vector<Point>& puntos) {
-    if (puntos.size() < 3) return 2;
-
-    int n = puntos.size();
-    Eigen::MatrixXd X(n, 2);
-    for (int i = 0; i < n; ++i) {
-        X(i, 0) = puntos[i].x;
-        X(i, 1) = puntos[i].y;
-    }
-
-    // Centrar
-    Eigen::RowVector2d media = X.colwise().mean();
-    Eigen::MatrixXd X_centered = X.rowwise() - media;
-
-    // PCA
-    Eigen::Matrix2d cov = (X_centered.transpose() * X_centered) / double(n - 1);
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(cov);
-    auto eigenvalues = solver.eigenvalues();
-    double lambda1 = eigenvalues(1); // mayor
-    double lambda2 = eigenvalues(0); // menor
-    double var_ratio = lambda1 / (lambda1 + lambda2);
-    double elongacion = lambda1 / lambda2;
-
-    // Bounding Box
-    double minX = puntos[0].x, maxX = puntos[0].x;
-    double minY = puntos[0].y, maxY = puntos[0].y;
-    for (const auto& p : puntos) {
-        minX = min(minX, p.x); maxX = max(maxX, p.x);
-        minY = min(minY, p.y); maxY = max(maxY, p.y);
-    }
-    double bbox_ratio = max((maxX - minX) / (maxY - minY), (maxY - minY) / (maxX - minX));
-
-    cout << "var_ratio = " << var_ratio
-         << ", bbox_ratio = " << bbox_ratio
-         << ", elongacion = " << elongacion << "\n";
-
-    // CRITERIOS REFORZADOS
-    if (var_ratio > 0.82 || elongacion > 1.4 || bbox_ratio > 1.6)
-        return 2; // tipo 2: blobs, varied, aniso
-
-    return 1; // tipo 1: círculos, lunas
-}
-
-pair<double, int> estimarParametrosAdaptativos(const vector<Point>& puntos) {
-    int tipo = detectarTipoDeDataset(puntos);
-    double eps;
-    int minPts;
-
-    if (tipo == 1) {
-        eps = estimarEpsCodoMaximo(puntos, 4);
-        minPts = 4;
-    } else {
-        minPts = estimarMinPts(puntos, 0.5);
-        eps = estimarEps(puntos, minPts);
-        minPts = estimarMinPts(puntos, eps);
-    }
-    
-    //cout<<"TIPO : "<<tipo<<endl;
-    cout<<"mejor epsilom: "<<eps<<" mejor min pts: "<<minPts<<endl;
-    return {eps, minPts};
-}
-
+ 
 int main() {
-    vector<string> filenames = {
-        "datasets/noisy_circles.csv", "datasets/noisy_moons.csv", 
-        "datasets/blobs.csv", "datasets/aniso.csv", "datasets/varied.csv"
-    };
+    char input[100];
+ 
+    while (running_threads) {
+        printf("\nEnter your choice:\n1. Print name.\n2. Print i-th Fibonacci number.\n3. Exit program.\n");
+        fgets(input, sizeof(input), stdin);
+ 
+        input[strcspn(input, "\n")] = 0; // quita el salto de cada entrada.
+ 
+        if (strcmp(input, "1") == 0) {
+            int* id = malloc(sizeof(int));
+            *id = thread_count;
+            create_thread(print_name, id);
+ 
+        } else if (strcmp(input, "2") == 0) {
+            printf("Enter the position for Fibonacci number: ");
+            fgets(input, sizeof(input), stdin);
+            input[strcspn(input, "\n")] = 0;
+ 
+            if (is_positive_integer(input)) {
+                int* n = malloc(sizeof(int));
+                *n = atoi(input);
+                create_thread(print_fibonacci, n);
+            } else {
+                printf("Invalid\n");
+            }
+ 
+        } else if (strcmp(input, "3") == 0) {
+            running_threads = 0;
+ 
+            for (int i = 0; i < thread_count; i++) {
+                pthread_cancel(threads[i]);
+            }
+ 
 
-    double eps = 0.5;
-    int minPts = 3;
+            for (int i = 0; i < thread_count; i++) {
+                pthread_join(threads[i], NULL);
+            }
+ 
+            printf("All threads terminated. Exiting program.\n");
+ 
+        } else {
+            printf("Error: Invalid input. Please enter 1, 2 or 3.\n");
+        }
+    }
+ 
+    return 0;
+}
 
-    for (const auto& file : filenames) {
-        auto pointsClassic = readCSV(file);
-        pair<double, int> params = estimarParametrosAdaptativos(pointsClassic);
-        cout << "Procesando: " << file << endl;
-        double eps = params.first;
-        int minPts = params.second;
-        //eps = estimarEpsCodoMaximo(pointsClassic,minPts);
-        //minPts = estimarMinPts(pointsClassic, eps);
-        
 
-        // DBSCAN clásico
-        
-        auto start1 = high_resolution_clock::now();
-        dbscan(pointsClassic, eps, minPts);
-        auto end1 = high_resolution_clock::now();
-        auto duration1 = duration_cast<milliseconds>(end1 - start1).count();
-        string outputClassic = file.substr(0, file.find('.')) + "_dbscan.csv";
-        writeCSV(outputClassic, pointsClassic);
-        cout << "DBSCAN clásico: " << duration1 << " ms -> " << outputClassic << endl;
 
-        // DBSCAN KDTree
-        auto pointsKD = readCSV(file);
-        auto start2 = high_resolution_clock::now();
-        dbscanKdTree(pointsKD, eps, minPts);
-        auto end2 = high_resolution_clock::now();
-        auto duration2 = duration_cast<milliseconds>(end2 - start2).count();
-        string outputKD = file.substr(0, file.find('.')) + "_kdtree.csv";
-        writeCSV(outputKD, pointsKD);
-        cout << "DBSCAN KDTree:  " << duration2 << " ms -> " << outputKD << endl;
+// Alexander Carpio Mamani
+#include <stdio.h>
+#include <stdlib.h>
 
-        cout << "--------------------------------------------\n";
+int main(int argc, char **argv)
+{
+    if (argc == 2)
+    {
+        int VA_bits = 32;
+
+        // 4 KB => 2^12 = 4096 bytes
+        int page_size = 4096;
+        int offset_bits = 12;
+
+        unsigned int vaddr = atoi(argv[1]);
+
+
+        // Al desplazar 12 bits a la derecha, eliminamos los bits del offset
+        // y nos quedamos con los bits del número de página, equivalente a dividir VA/2^12(offset).
+        // | 20 bits para page number | 12 bits para offset |
+        unsigned int page_number = vaddr >> offset_bits;
+
+        // page_size - 1: porque las direcciones van de 0 a 4995, las siguientes memorias van de 4996 para adelante.
+        // y usamos el '&' para verificar los 12 ultimos bits de la virtualaddress
+        /*
+        mask    =      0000 1111 1111 1111
+        vaddr   = 0001 0001 0010 1011 0101
+        &       -------------------------
+        result  =      0000 0010 1011 0101 = 0x2B5 = 693
+        */
+        // y usamos el '&' en vez de un '%', ya que es mas eficiente y hace menos calculos, ya que tabaja con procesos binarios y menos instrucciones.
+        unsigned int offset = vaddr & (page_size - 1); // o (1 << 12) - 1
+
+        printf("VA Size[%d] Bits\n", VA_bits);
+        printf("Page Size is [4KB][%dbits]\n", offset_bits);
+        printf("The address [%u] = [%Xh] contains:\n", vaddr, vaddr);
+        printf("page number = [%u] = [%Xh]\n", page_number, page_number);
+        printf("offset = [%u] = [%Xh]\n", offset, offset);
+    }
+    else
+    {
+        printf("Usage: ./program <virtual address (decimal)>\n");
     }
 
     return 0;
 }
 
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
 
+#define BUFFER_SIZE 5
+#define NUM_PRODUCERS 3
+#define NUM_CONSUMERS 3
+#define ITEMS_PER_THREAD 5
 
+int buffer[BUFFER_SIZE];
+int count = 0;
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 
+void* producer(void* arg) {
+    int id = *(int*)arg;
+    for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+        pthread_mutex_lock(&mutex);
 
+        while (count == BUFFER_SIZE) {
+            pthread_cond_wait(&cond, &mutex);
+        }
 
+        int item = id * 100 + i;
+        buffer[count++] = item;
+        printf("Producer %d produced: %d (count=%d)\n", id, item, count);
 
+        pthread_cond_broadcast(&cond); // Despertar a consumidores y productores
+        pthread_mutex_unlock(&mutex);
 
-
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <random>
-#include <algorithm>
-#include <sstream>
-#include <cmath>
-#include <limits>
-#include <memory>
-#include <string>
-#include <chrono>
-
-using namespace std;
-
-struct Punto {
-    float x, y;
-    int indice;
-
-    bool operator==(const Punto& otro) const {
-        return x == otro.x && y == otro.y;
+        usleep(rand() % 500000); // Simula trabajo o para que no corran todos
     }
-};
-
-float distancia(const Punto& a, const Punto& b) {
-    return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
+    return NULL;
 }
 
-struct NodoKD {
-    Punto punto;
-    unique_ptr<NodoKD> izquierda;
-    unique_ptr<NodoKD> derecha;
+void* consumer(void* arg) {
+    int id = *(int*)arg;
+    for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+        pthread_mutex_lock(&mutex);
 
-    NodoKD(Punto p) : punto(p), izquierda(nullptr), derecha(nullptr) {}
-};
-
-class KDTree {
-private:
-    unique_ptr<NodoKD> raiz;
-
-    void insertarRec(unique_ptr<NodoKD>& nodo, const Punto& punto, int profundidad) {
-        if (!nodo) {
-            nodo = make_unique<NodoKD>(punto);
-            return;
+        while (count == 0) {
+            pthread_cond_wait(&cond, &mutex);
         }
 
-        int eje = profundidad % 2;
-        if ((eje == 0 && punto.x < nodo->punto.x) || (eje == 1 && punto.y < nodo->punto.y))
-            insertarRec(nodo->izquierda, punto, profundidad + 1);
-        else
-            insertarRec(nodo->derecha, punto, profundidad + 1);
+        int item = buffer[--count];
+        printf("Consumer %d consumed: %d (count=%d)\n", id, item, count);
+
+        pthread_cond_broadcast(&cond);
+        pthread_mutex_unlock(&mutex);
+
+        usleep(rand() % 500000);
     }
-
-    void nearestNeighborRec(NodoKD* nodo, const Punto& objetivo, int profundidad,
-                            Punto& mejor, double& mejorDistancia) const {
-        if (!nodo) return;
-
-        double d = distancia(objetivo, nodo->punto);
-        if (d < mejorDistancia) {
-            mejorDistancia = d;
-            mejor = nodo->punto;
-        }
-
-        int eje = profundidad % 2;
-        NodoKD* ladoPrimario = nullptr;
-        NodoKD* ladoSecundario = nullptr;
-
-        if ((eje == 0 && objetivo.x < nodo->punto.x) || (eje == 1 && objetivo.y < nodo->punto.y)) {
-            ladoPrimario = nodo->izquierda.get();
-            ladoSecundario = nodo->derecha.get();
-        } else {
-            ladoPrimario = nodo->derecha.get();
-            ladoSecundario = nodo->izquierda.get();
-        }
-
-        nearestNeighborRec(ladoPrimario, objetivo, profundidad + 1, mejor, mejorDistancia);
-
-        // Verifica si vale la pena buscar en el otro lado
-        double distanciaEje = (eje == 0) ? abs(objetivo.x - nodo->punto.x) : abs(objetivo.y - nodo->punto.y);
-        if (distanciaEje < mejorDistancia) {
-            nearestNeighborRec(ladoSecundario, objetivo, profundidad + 1, mejor, mejorDistancia);
-        }
-    }
-
-public:
-    void insertar(const Punto& punto) {
-        insertarRec(raiz, punto, 0);
-    }
-
-    int nearestNeighborIndex(const Punto& objetivo) const {
-        if (!raiz) return -1;
-
-        Punto mejor = raiz->punto;
-        double mejorDistancia = distancia(objetivo, mejor);
-
-        nearestNeighborRec(raiz.get(), objetivo, 0, mejor, mejorDistancia);
-
-        return mejor.indice;
-    }
-};
-
-pair<vector<Punto>, vector<int>> kmeans(vector<Punto>& puntos, int k, int max_iter = 100, bool guardar_csv = false, const string& nombre_csv = "evolucion_kdtree.csv") {
-    int n = puntos.size();
-    if (k > n) throw invalid_argument("k no puede ser mayor a la cantidad de puntos");
-
-    random_device rd;
-    mt19937 gen(rd());
-    shuffle(puntos.begin(), puntos.end(), gen);
-
-    vector<Punto> centroides;
-    for (int i = 0; i < k; i++) {
-        Punto c = puntos[i];
-        c.indice = i;
-        centroides.push_back(c);
-    }
-
-    vector<int> asignaciones(n, -1);
-    vector<int> cambios_por_iteracion;
-
-    for (int iter = 0; iter < max_iter; iter++) {
-        KDTree kd;
-        for (const auto& c : centroides) {
-            kd.insertar(c);
-        }
-
-        bool hubo_cambio = false;
-
-        for (int i = 0; i < n; i++) {
-            int centroide_mas_cercano = kd.nearestNeighborIndex(puntos[i]);
-            if (asignaciones[i] != centroide_mas_cercano) {
-                asignaciones[i] = centroide_mas_cercano;
-                hubo_cambio = true;
-            }
-        }
-
-        if (!hubo_cambio) break;
-
-        vector<Punto> nuevos_centroides(k, {0, 0, 0});
-        vector<int> conteo(k, 0);
-
-        for (int i = 0; i < n; i++) {
-            int c = asignaciones[i];
-            nuevos_centroides[c].x += puntos[i].x;
-            nuevos_centroides[c].y += puntos[i].y;
-            conteo[c]++;
-        }
-
-        int centroides_movidos = 0;
-        for (int i = 0; i < k; i++) {
-            if (conteo[i] > 0) {
-                nuevos_centroides[i].x /= conteo[i];
-                nuevos_centroides[i].y /= conteo[i];
-            } else {
-                nuevos_centroides[i] = centroides[i];
-            }
-
-            // Contar cambios de posición
-            if (nuevos_centroides[i].x != centroides[i].x || nuevos_centroides[i].y != centroides[i].y) {
-                centroides_movidos++;
-            }
-
-            nuevos_centroides[i].indice = i;
-        }
-
-        cambios_por_iteracion.push_back(centroides_movidos);
-        centroides = nuevos_centroides;
-    }
-
-    if (guardar_csv) {
-        ofstream file(nombre_csv);
-        file << "iteracion,centroides_movidos\n";
-        for (int i = 0; i < cambios_por_iteracion.size(); ++i) {
-            file << i << "," << cambios_por_iteracion[i] << "\n";
-        }
-        file.close();
-    }
-
-    return {centroides, asignaciones};
-}
-
-
-vector<Punto> leerCSV(const string& nombreArchivo) {
-    vector<Punto> puntos;
-    ifstream archivo(nombreArchivo);
-    if (!archivo.is_open()) {
-        cerr << "Error al abrir el archivo: " << nombreArchivo << "\n";  // <--- Verifica apertura
-        return puntos;
-    }
-    string linea;
-    int indice = 0;
-
-    getline(archivo, linea); // Salta encabezado
-
-    while (getline(archivo, linea)) {
-        stringstream ss(linea);
-        string xStr, yStr;
-
-        if (getline(ss, xStr, ',') && getline(ss, yStr, ',')) {
-            Punto p;
-            p.x = stof(xStr);  // Cambié a stof por ser float
-            p.y = stof(yStr);
-            p.indice = indice++;
-            puntos.push_back(p);
-        }
-    }
-
-    return puntos;
-}
-
-
-
-// struct Punto {
-//     float x, y;
-//     int indice = -1;
-// };
-
-// float distancia(const Punto& a, const Punto& b) {
-//     float dx = a.x - b.x;
-//     float dy = a.y - b.y;
-//     return dx * dx + dy * dy; 
-// }
-
-pair<vector<Punto>, vector<int>> kmeans_fuerza_bruta(vector<Punto>& puntos, int k, int max_iter = 100, bool guardar_csv = false, const string& nombre_csv = "evolucion_centroides.csv") {
-    int n = puntos.size();
-    if (k > n) throw invalid_argument("k no puede ser mayor a la cantidad de puntos");
-
-    random_device rd;
-    mt19937 gen(rd());
-    shuffle(puntos.begin(), puntos.end(), gen);
-
-    vector<Punto> centroides;
-    for (int i = 0; i < k; i++) {
-        Punto c = puntos[i];
-        c.indice = i;
-        centroides.push_back(c);
-    }
-
-    vector<int> asignaciones(n, -1);
-    vector<int> cambios_por_iteracion;
-
-    for (int iter = 0; iter < max_iter; iter++) {
-        bool hubo_cambio = false;
-
-        // Paso 1: asignación de puntos al centroide más cercano
-        for (int i = 0; i < n; i++) {
-            float min_dist = numeric_limits<float>::max();
-            int centroide_mas_cercano = -1;
-
-            for (int j = 0; j < k; j++) {
-                float d = distancia(puntos[i], centroides[j]);
-                if (d < min_dist) {
-                    min_dist = d;
-                    centroide_mas_cercano = j;
-                }
-            }
-
-            if (asignaciones[i] != centroide_mas_cercano) {
-                asignaciones[i] = centroide_mas_cercano;
-                hubo_cambio = true;
-            }
-        }
-
-        if (!hubo_cambio) break;
-
-        // Paso 2: actualizar centroides
-        vector<Punto> nuevos_centroides(k, {0, 0, 0});
-        vector<int> conteo(k, 0);
-
-        for (int i = 0; i < n; i++) {
-            int c = asignaciones[i];
-            nuevos_centroides[c].x += puntos[i].x;
-            nuevos_centroides[c].y += puntos[i].y;
-            conteo[c]++;
-        }
-
-        int centroides_movidos = 0;
-        for (int i = 0; i < k; i++) {
-            if (conteo[i] > 0) {
-                nuevos_centroides[i].x /= conteo[i];
-                nuevos_centroides[i].y /= conteo[i];
-            } else {
-                nuevos_centroides[i] = centroides[i];
-            }
-
-            // contar si el centroide se movió
-            if (nuevos_centroides[i].x != centroides[i].x || nuevos_centroides[i].y != centroides[i].y) {
-                centroides_movidos++;
-            }
-
-            nuevos_centroides[i].indice = i;
-        }
-
-        cambios_por_iteracion.push_back(centroides_movidos);
-        centroides = nuevos_centroides;
-    }
-
-    // Guardar CSV si se solicita
-    if (guardar_csv) {
-        ofstream file(nombre_csv);
-        file << "iteracion,centroides_movidos\n";
-        for (int i = 0; i < cambios_por_iteracion.size(); ++i) {
-            file << i << "," << cambios_por_iteracion[i] << "\n";
-        }
-        file.close();
-    }
-
-    return {centroides, asignaciones};
-}
-
-
-
-void guardarTiempoCSV(const string& filename, const vector<tuple<int, int, double>>& tiempos) {
-    ofstream out(filename);
-    out << "n,k,tiempo_ms\n";
-    for (const auto& [n, k, tiempo] : tiempos) {
-        out << n << "," << k << "," << tiempo << "\n";
-    }
+    return NULL;
 }
 
 int main() {
-    vector<int> n_vals = {1000, 1150, 1300, 1450, 1600, 1750, 1900, 2050, 2200, 2400};
-    vector<int> k_vals = {5, 15, 25, 50, 75};
+    pthread_t producers[NUM_PRODUCERS], consumers[NUM_CONSUMERS];
+    int ids[NUM_PRODUCERS > NUM_CONSUMERS ? NUM_PRODUCERS : NUM_CONSUMERS];
 
-    vector<Punto> puntos = leerCSV("points2d.csv");
-    cout << "Total puntos leídos: " << puntos.size() << "\n";
-
-    for(int i=1;i<11;i++){
-        string title = "Test_" + to_string(i) + ".csv";
-        auto resultado = kmeans(puntos, 18,100, true,title);
-        title = "Test_force_" + to_string(i) + ".csv";
-        auto resultado2 = kmeans_fuerza_bruta(puntos, 18,100,true,title);
+    for (int i = 0; i < NUM_PRODUCERS; i++) {
+        ids[i] = i + 1;
+        pthread_create(&producers[i], NULL, producer, &ids[i]);
     }
 
-    vector<tuple<int, int, double>> tiempos;
-
-    for (int k : k_vals) {
-
-        for (int n : n_vals) {
-            if (k >= n) continue;
-            if (n > (int)puntos.size()) continue;
-            vector<Punto> subpuntos(puntos.begin(), puntos.begin() + n);
-
-            cout << "Ejecutando KMeans con n = " << n << ", k = " << k << "...\n";
-
-            auto inicio = chrono::high_resolution_clock::now();
-            auto resultado = kmeans(subpuntos, k);
-            auto fin = chrono::high_resolution_clock::now();
-
-            double tiempo_ms = chrono::duration<double, std::milli>(fin - inicio).count();
-            tiempos.push_back({n, k, tiempo_ms});
-
-            //string nombre_archivo = "resultado_n" + to_string(n) + "_k" + to_string(k) + ".csv";
-        }
+    for (int i = 0; i < NUM_CONSUMERS; i++) {
+        ids[i] = i + 1;
+        pthread_create(&consumers[i], NULL, consumer, &ids[i]);
     }
 
-    guardarTiempoCSV("tiempos.csv", tiempos);
-
-    // Fuerza Bruta KMeans
-    vector<tuple<int, int, double>> tiempos_fuerza_bruta;
-
-    for (int k : k_vals) {
-    
-        for (int n : n_vals) {
-            if (k >= n) continue;
-            if (n > (int)puntos.size()) continue;
-            vector<Punto> subpuntos(puntos.begin(), puntos.begin() + n);
-            
-            cout << "[FuerzaBruta] Ejecutando KMeans con n = " << n << ", k = " << k << "...\n";
-    
-            auto inicio = chrono::high_resolution_clock::now();
-            auto resultado = kmeans_fuerza_bruta(subpuntos, k);
-            auto fin = chrono::high_resolution_clock::now();
-    
-            double tiempo_ms = chrono::duration<double, std::milli>(fin - inicio).count();
-            tiempos_fuerza_bruta.push_back({n, k, tiempo_ms});
-        }
+    for (int i = 0; i < NUM_PRODUCERS; i++) {
+        pthread_join(producers[i], NULL);
     }
-    
-    guardarTiempoCSV("fuerza_bruta.csv", tiempos_fuerza_bruta);
-    
+
+    for (int i = 0; i < NUM_CONSUMERS; i++) {
+        pthread_join(consumers[i], NULL);
+    }
+
     return 0;
 }
 
 
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
+void *barber_function(void *idp);
+void *customer_function(void *idp);
+void serve_customer();
+void *make_customer_function();
 
+sem_t barber_ready;
+sem_t customer_ready;
+sem_t modifySeats;
 
-double estimarEpsCodoSimple(const vector<Point>& puntos, int k = 4) {
-    vector<double> k_distances;
+int chair_cnt;
+int total_custs;
 
-    for (int i = 0; i < puntos.size(); ++i) {
-        vector<double> dists;
-        for (int j = 0; j < puntos.size(); ++j) {
-            if (i == j) continue;
-            dists.push_back(distance(puntos[i], puntos[j]));
-        }
-        sort(dists.begin(), dists.end());
-        k_distances.push_back(dists[k - 1]);  // distancia al k-ésimo vecino más cercano
-    }
+int available_seats;
+int no_served_custs = 0;
+time_t waiting_time_sum;
 
-    sort(k_distances.begin(), k_distances.end());
+void *barber_function(void *idp) {
+  while (1) {
+    sem_wait(&customer_ready); // Espera a un cliente
+    sem_wait(&modifySeats);
+    available_seats++;
+    sem_post(&barber_ready); // Barber listo
+    sem_post(&modifySeats);
 
-    // Elegir el percentil 90% como aproximación del codo (puedes ajustar)
-    int idx = int(k_distances.size() * 0.9);
-    return k_distances[idx];
+    printf("\n[Barber] Available_seats: %d.\n", available_seats);
+    printf("[Barber] Customer was served.\n");
+
+    serve_customer();
+  }
+  pthread_exit(NULL);
+}
+
+void *customer_function(void *idp) {
+  sem_wait(&modifySeats);
+  if (available_seats > 0) {
+    available_seats--;
+    sem_post(&customer_ready); // Notifica llegada
+    sem_post(&modifySeats);
+
+    printf("[Customer pid = %lu] is waiting. Available seats: %d\n",
+           pthread_self(), available_seats);
+
+    sem_wait(&barber_ready); // Espera al barbero
+
+    printf("[Customer pid = %lu] is being served.\n", pthread_self());
+  } else {
+    sem_post(&modifySeats);
+    no_served_custs++;
+    printf("[Customer pid = %lu] left. Available_seats: %d.\n", pthread_self(),
+           available_seats);
+  }
+
+  pthread_exit(NULL);
+}
+
+void serve_customer() {
+  int s = rand() % 401;
+  s = s * 1000;
+  usleep(s);
+}
+
+void *make_customer_function() {
+  int tmp;
+  int counter = 0;
+
+  while (counter < total_custs) {
+    pthread_t customer_thread;
+
+    tmp =
+        pthread_create(&customer_thread, NULL, (void *)customer_function, NULL);
+
+    if (tmp)
+      printf("Failed to create thread.\n");
+
+    counter++;
+    usleep(100000); // 100ms
+  }
+
+  pthread_exit(NULL);
+}
+
+int main(int argc, char *argv[]) {
+  if (argc != 3)
+    printf("Command Line Argumentes should be: ./program <number_of_seats> "
+           "<number_of_customers>\n");
+  else {
+    chair_cnt = atoi(argv[1]);
+    total_custs = atoi(argv[2]);
+
+    srand(time(NULL));
+
+    pthread_t barber_1;
+    pthread_t customer_maker;
+    int tmp;
+
+    sem_init(&customer_ready, 0, 0);
+    sem_init(&barber_ready, 0, 0);
+    sem_init(&modifySeats, 0, 1);
+
+    available_seats = chair_cnt;
+
+    tmp = pthread_create(&barber_1, NULL, (void *)barber_function, NULL);
+    if (tmp)
+      printf("Failed to create barber thread.\n");
+
+    tmp = pthread_create(&customer_maker, NULL, (void *)make_customer_function,
+                         NULL);
+    if (tmp)
+      printf("Failed to create customer_maker thread.\n");
+
+    pthread_join(barber_1, NULL);
+    pthread_join(customer_maker, NULL);
+
+    printf("\n------------------------------------------------\n");
+    printf("Number of served customers: %d\n", (total_custs - no_served_custs));
+    printf("Number of customers that were forced to leave: %d\n",
+           no_served_custs);
+  }
 }
 
 
 
+ 1. Manejo de Swap (Swapping)
+Es la técnica de mover procesos entre memoria principal y disco para liberar espacio.
+Ejemplo: Si no hay memoria suficiente, un proceso inactivo se “swapea” al disco (área de swap) y luego se trae de nuevo cuando se necesita.
 
+📌 2. Swapping Policies (Políticas de intercambio)
+Determinan cuándo y qué procesos se deben mover al swap.
 
+FIFO: el más antiguo se mueve primero.
 
+Least Recently Used (LRU): el que no se usó por más tiempo.
 
+Prioridad: procesos con baja prioridad son enviados a swap.
 
+📌 3. Padding
+En sistemas, padding se refiere a relleno adicional que se usa para:
 
+Alinear datos en memoria para mayor eficiencia.
 
+Evitar conflictos de acceso (por ejemplo, alineación a 4 bytes).
 
+También se usa en sistemas de archivos para completar bloques.
+
+📌 4. Semáforos
+Son variables especiales que permiten controlar el acceso concurrente a recursos compartidos en sistemas con múltiples procesos o hilos.
+
+sem_wait(): bloquea si el recurso no está disponible.
+
+sem_post(): libera el recurso.
+Útiles para evitar condiciones de carrera y asegurar sincronización.
+
+📌 5. Rendezvous
+Es una técnica de sincronización uno-a-uno entre dos procesos o hilos.
+Ambos deben llegar a cierto punto para poder continuar.
+Ejemplo: un cliente y un servidor deben estar listos al mismo tiempo para realizar una operación.
+
+📌 6. Problema del barbero dormido
+Modelo clásico de sincronización:
+
+Un barbero duerme si no hay clientes.
+
+Clientes llegan y se van si no hay sillas libres.
+
+Se usa semáforos para controlar acceso a la silla y la sala de espera.
+
+📌 7. Bus Station Problem (Estación de buses)
+Un problema de concurrencia donde se sincronizan:
+
+Pasajeros que esperan en una estación.
+
+Un bus que llega y permite que suban hasta que se llena o no quedan más pasajeros.
+
+Necesario: control de acceso concurrente con semáforos y condiciones.
+
+📌 8. Problema de los filósofos comensales
+Cinco filósofos comparten una mesa y tenedores. Cada uno:
+
+Piensa.
+
+Quiere comer y necesita 2 tenedores (el de la izquierda y el de la derecha).
+Problema: evitar interbloqueos y inanición.
+Soluciones:
+
+Semáforos para evitar tomar tenedores si no hay dos disponibles.
+
+Jerarquía en adquisición de tenedores.
+
+📌 9. Disco (Gestión de disco)
+El sistema operativo debe:
+
+Organizar archivos en sectores del disco.
+
+Minimizar el tiempo de búsqueda (seek time).
+
+Algoritmos de planificación de disco:
+
+FCFS
+
+SSTF (el más cercano primero)
+
+SCAN (ascensor)
+
+LOOK (como SCAN pero sin ir al final)
+
+📌 10. Máquinas Virtuales (VMs)
+Permiten ejecutar varios sistemas operativos sobre una misma máquina física.
+Tipos:
+
+VM completas (como VirtualBox): emulan hardware.
+
+Contenedores (como Docker): comparten el núcleo pero aíslan entornos.
+
+Ventajas:
+
+Aislamiento
+
+Portabilidad
+
+Ahorro de recursos
